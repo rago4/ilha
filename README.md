@@ -102,14 +102,15 @@ If the input is cleared and the state is a number, the value falls back to `0` r
 
 Element types and their behaviour:
 
-| Element                  | Event              | Property         |
-| ------------------------ | ------------------ | ---------------- |
-| `input` (text, email, …) | `input`            | `.value`         |
-| `input[type=number]`     | `input`            | `.valueAsNumber` |
-| `input[type=checkbox]`   | `change`           | `.checked`       |
-| `select`, `textarea`     | `change` / `input` | `.value`         |
+| Element                  | Event              | Property          |
+| ------------------------ | ------------------ | ----------------- |
+| `input` (text, email, …) | `input`            | `.value`          |
+| `input[type=number]`     | `input`            | `.valueAsNumber`  |
+| `input[type=checkbox]`   | `change`           | `.checked`        |
+| `input[type=radio]`      | `change`           | selected `.value` |
+| `select`, `textarea`     | `change` / `input` | `.value`          |
 
-> **Note:** `input[type=radio]` groups are not currently supported by `.bind()`.
+For radio groups, bind all radios in the group to the same state key, typically via a shared selector like `[name=plan]`. The state stores the selected radio's `value`:
 
 `.bind()` is a no-op during SSR — it only activates on mount.
 
@@ -291,7 +292,6 @@ html`<p>${state.count}</p>`; // signal accessor — calls getter + escapes
 
 ## Known limitations
 
-- `input[type=radio]` groups are not supported by `.bind()`
 - `context()` signals are global with no scoping or cleanup mechanism
 - Implicit string interpolation of islands (`${island}`) is always synchronous, so async derived values fall back to `loading`
 

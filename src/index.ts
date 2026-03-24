@@ -372,6 +372,21 @@ function resolveBindConfig(el: Element): {
     };
   }
 
+  if (tag === "input" && type === "radio") {
+    return {
+      prop: "checked",
+      event: "change",
+      read: (el) => {
+        const input = el as HTMLInputElement;
+        return input.checked ? input.value : undefined;
+      },
+      write: (el, v) => {
+        const input = el as HTMLInputElement;
+        input.checked = String(v ?? "") === input.value;
+      },
+    };
+  }
+
   if (tag === "input" && type === "number") {
     return {
       prop: "valueAsNumber",
@@ -403,11 +418,17 @@ function applyBindings<TStateMap extends Record<string, unknown>>(
     for (const target of targets) {
       const { event, read, write } = resolveBindConfig(target);
       const accessor = state[binding.stateKey] as SignalAccessor<unknown>;
+      const input = target as HTMLInputElement;
+      const isRadio =
+        input.tagName.toLowerCase() === "input" && input.type?.toLowerCase() === "radio";
 
       write(target, accessor());
 
       const listener = () => {
         const raw = read(target);
+
+        if (isRadio && raw === undefined) return;
+
         const currentVal = accessor();
         let value: unknown;
         if (typeof currentVal === "number") {

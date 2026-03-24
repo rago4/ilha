@@ -272,15 +272,16 @@ The DOM value is automatically coerced to match the type of the current state va
 
 #### Supported elements
 
-| Element                  | Listens on | Reads / writes   |
-| ------------------------ | ---------- | ---------------- |
-| `input` (text, email, …) | `input`    | `.value`         |
-| `input[type=number]`     | `input`    | `.valueAsNumber` |
-| `input[type=checkbox]`   | `change`   | `.checked`       |
-| `select`                 | `change`   | `.value`         |
-| `textarea`               | `input`    | `.value`         |
+| Element                  | Listens on | Reads / writes    |
+| ------------------------ | ---------- | ----------------- |
+| `input` (text, email, …) | `input`    | `.value`          |
+| `input[type=number]`     | `input`    | `.valueAsNumber`  |
+| `input[type=checkbox]`   | `change`   | `.checked`        |
+| `input[type=radio]`      | `change`   | selected `.value` |
+| `select`                 | `change`   | `.value`          |
+| `textarea`               | `input`    | `.value`          |
 
-> `input[type=radio]` groups are not currently supported.
+For radio groups, bind all radios in the group to the same state key, typically via a shared selector like `[name=plan]`. The state stores the selected radio's `value`.
 
 #### SSR behaviour
 
@@ -851,6 +852,5 @@ interface MountOptions {
 
 ## Known limitations
 
-- **`input[type=radio]` groups** are not supported by `.bind()`.
 - **`context()` signals** are global for the page lifetime with no scoping or cleanup mechanism.
 - **Element references go stale after re-render** — always re-query from the island root element after any interaction that changes state.

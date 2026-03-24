@@ -1,16 +1,33 @@
 {
   "name": "ilha",
-  "private": true,
+  "version": "0.0.1",
+  "description": "A tiny, framework-free island architecture library",
+  "license": "MIT",
+  "author": "Ryuz <ryuzer@proton.me>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guarana-studio/ilha.git"
+  },
+  "files": [
+    "dist"
+  ],
   "type": "module",
   "module": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
   "scripts": {
+    "build": "tsc && tsdown",
     "test": "bun test",
     "playground": "bun playground/index.html",
     "lint": "oxlint",
     "fmt": "oxfmt",
     "prepare": "husky",
     "docs:dev": "bunx docsome dev DOCS.md",
-    "docs:build": "bunx docsome build DOCS.md"
+    "docs:build": "bunx docsome build DOCS.md --outDir docs_dist"
   },
   "dependencies": {
     "alien-signals": "^3.1.2"
@@ -22,6 +39,7 @@
     "husky": "^9.1.7",
     "oxfmt": "^0.41.0",
     "oxlint": "^1.56.0",
+    "tsdown": "^0.21.4",
     "zod": "^4.3.6"
   },
   "peerDependencies": {

@@ -1980,5 +1980,88 @@ describe("ilha.mount()", () => {
       unmount();
       cleanup(el);
     });
+
+    // ── Radio groups ──────────────────────────────────────────────────────────
+
+    it("client: radio group change updates string state", () => {
+      const island = ilha
+        .state("plan", "pro")
+        .bind("[name=plan]", "plan")
+        .render(
+          ({ state }) => html`
+            <input type="radio" name="plan" value="free" ${state.plan() === "free" ? "checked" : ""} />
+            <input type="radio" name="plan" value="pro" ${state.plan() === "pro" ? "checked" : ""} />
+            <p>${state.plan()}</p>
+          `,
+        );
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+
+      const free = el.querySelector<HTMLInputElement>('input[name="plan"][value="free"]')!;
+      free.checked = true;
+      free.dispatchEvent(new Event("change"));
+
+      expect(el.querySelector("p")!.textContent).toBe("free");
+
+      unmount();
+      cleanup(el);
+    });
+
+    it("client: programmatic radio state change updates checked input", () => {
+      let accessor!: (v?: string) => string | void;
+
+      const island = ilha
+        .state("plan", "free")
+        .bind("[name=plan]", "plan")
+        .render(({ state }) => {
+          accessor = state.plan as typeof accessor;
+          return html`
+            <input type="radio" name="plan" value="free" ${state.plan() === "free" ? "checked" : ""} />
+            <input type="radio" name="plan" value="pro" ${state.plan() === "pro" ? "checked" : ""} />
+          `;
+        });
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+
+      accessor("pro");
+
+      expect(el.querySelector<HTMLInputElement>('input[name="plan"][value="free"]')!.checked).toBe(
+        false,
+      );
+      expect(el.querySelector<HTMLInputElement>('input[name="plan"][value="pro"]')!.checked).toBe(
+        true,
+      );
+
+      unmount();
+      cleanup(el);
+    });
+
+    it("client: radio group coerces DOM string to number from state type", () => {
+      const island = ilha
+        .state("level", 2)
+        .bind("[name=level]", "level")
+        .render(
+          ({ state }) => html`
+            <input type="radio" name="level" value="1" ${state.level() === 1 ? "checked" : ""} />
+            <input type="radio" name="level" value="2" ${state.level() === 2 ? "checked" : ""} />
+            <input type="radio" name="level" value="3" ${state.level() === 3 ? "checked" : ""} />
+            <p>${state.level()}</p>
+          `,
+        );
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+
+      const three = el.querySelector<HTMLInputElement>('input[name="level"][value="3"]')!;
+      three.checked = true;
+      three.dispatchEvent(new Event("change"));
+
+      expect(el.querySelector("p")!.textContent).toBe("3");
+
+      unmount();
+      cleanup(el);
+    });
   });
 });
