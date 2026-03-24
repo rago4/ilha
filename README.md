@@ -91,6 +91,13 @@ Both directions are handled automatically:
 - **DOM → state** — when the user types or toggles, the signal updates immediately
 - **state → DOM** — when the signal changes programmatically, the element's value/checked syncs
 
+The DOM value is automatically coerced to match the type of the state key — no manual conversion needed:
+
+```ts
+.state("count", 0)
+.bind("[data-count]", "count")  // input string coerced to number automatically
+```
+
 Element types and their behaviour:
 
 | Element                  | Event              | Property         |
@@ -99,13 +106,6 @@ Element types and their behaviour:
 | `input[type=number]`     | `input`            | `.valueAsNumber` |
 | `input[type=checkbox]`   | `change`           | `.checked`       |
 | `select`, `textarea`     | `change` / `input` | `.value`         |
-
-An optional third argument coerces the raw DOM string before writing to state:
-
-```ts
-.bind("[data-age]", "age", Number)   // input string → number state
-.bind("[data-tags]", "tags", (v) => v.split(",").map((s) => s.trim()))
-```
 
 `.bind()` is a no-op during SSR — it only activates on mount.
 

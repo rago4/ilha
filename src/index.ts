@@ -326,7 +326,6 @@ type BindTransform<V> = (raw: string) => V;
 interface BindEntry<TStateMap extends Record<string, unknown>> {
   selector: string;
   stateKey: keyof TStateMap & string;
-  transform?: BindTransform<unknown>;
 }
 
 /**
@@ -384,13 +383,21 @@ function applyBindings<TStateMap extends Record<string, unknown>>(
       const { event, read, write } = resolveBindConfig(target);
       const accessor = state[binding.stateKey] as SignalAccessor<unknown>;
 
-      // state → DOM: sync current state value into the element on (re-)mount
+      // state → DOM: sync current value into the element on (re-)mount
       write(target, accessor());
 
-      // DOM → state: update signal when the user changes the element
+      // DOM → state: coerce raw DOM value to match the state's current type
       const listener = () => {
         const raw = read(target);
-        const value = binding.transform ? binding.transform(String(raw)) : raw;
+        const currentVal = accessor();
+        let value: unknown;
+        if (typeof currentVal === "number") {
+          value = Number(raw);
+        } else if (typeof currentVal === "boolean") {
+          value = Boolean(raw);
+        } else {
+          value = raw;
+        }
         accessor(value);
       };
       target.addEventListener(event, listener);
@@ -597,10 +604,9 @@ class IlhaBuilder<
     );
   }
 
-  bind<K extends keyof TStateMap & string>(
+  bind<V = TStateMap[keyof TStateMap]>(
     selector: string,
-    stateKey: K,
-    transform?: BindTransform<TStateMap[K]>,
+    stateKey: keyof TStateMap & string,
   ): IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots> {
     return new IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots>(
       this._schema,
@@ -610,14 +616,7 @@ class IlhaBuilder<
       this._effects,
       this._slots,
       this._transition,
-      [
-        ...this._binds,
-        {
-          selector,
-          stateKey,
-          transform: transform as BindTransform<unknown> | undefined,
-        },
-      ],
+      [...this._binds, { selector, stateKey }],
     );
   }
 
