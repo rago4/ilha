@@ -1,4 +1,4 @@
-// index.ts
+// src/index.ts
 
 import { signal, effect, setActiveSub } from "alien-signals";
 
@@ -248,7 +248,6 @@ async function makeAsyncDerived<TDerivedMap extends Record<string, unknown>>(
 ): Promise<IslandDerived<TDerivedMap>> {
   const ac = new AbortController();
   const derived: Record<string, DerivedValue<unknown>> = {};
-
   await Promise.all(
     entries.map(async (entry) => {
       try {
@@ -265,7 +264,6 @@ async function makeAsyncDerived<TDerivedMap extends Record<string, unknown>>(
       }
     }),
   );
-
   return derived as IslandDerived<TDerivedMap>;
 }
 
@@ -414,21 +412,16 @@ function applyBindings<TStateMap extends Record<string, unknown>>(
   for (const binding of bindings) {
     const targets =
       binding.selector === "" ? [el] : Array.from(el.querySelectorAll<Element>(binding.selector));
-
     for (const target of targets) {
       const { event, read, write } = resolveBindConfig(target);
       const accessor = state[binding.stateKey] as SignalAccessor<unknown>;
       const input = target as HTMLInputElement;
       const isRadio =
         input.tagName.toLowerCase() === "input" && input.type?.toLowerCase() === "radio";
-
       write(target, accessor());
-
       const listener = () => {
         const raw = read(target);
-
         if (isRadio && raw === undefined) return;
-
         const currentVal = accessor();
         let value: unknown;
         if (typeof currentVal === "number") {
@@ -497,6 +490,35 @@ export type HandlerContext<TInput, TStateMap extends Record<string, unknown>> = 
   event: Event;
 };
 
+// ─────────────────────────────────────────────
+// .on() event autocomplete types
+// ─────────────────────────────────────────────
+
+type HTMLEventName = keyof HTMLElementEventMap & string;
+
+type Modifier = "once" | "capture" | "passive";
+
+type WithModifiers<E extends string> =
+  | E
+  | `${E}:${Modifier}`
+  | `${E}:${Modifier}:${Modifier}`
+  | `${E}:${Modifier}:${Modifier}:${Modifier}`;
+
+type OnSelectorString =
+  | `@${WithModifiers<HTMLEventName>}`
+  | `${string}@${WithModifiers<HTMLEventName>}`;
+
+export type HandlerContextFor<
+  TInput,
+  TStateMap extends Record<string, unknown>,
+  TEventName extends string,
+> = {
+  state: IslandState<TStateMap>;
+  input: TInput;
+  el: Element;
+  event: TEventName extends keyof HTMLElementEventMap ? HTMLElementEventMap[TEventName] : Event;
+};
+
 type StateInit<TInput, V> = V | ((input: TInput) => V);
 
 interface StateEntry<TInput> {
@@ -514,40 +536,24 @@ interface ParsedOn {
   options: AddEventListenerOptions;
 }
 
-function parseOnArgs(
-  selectorOrCombined: string,
-  callbackOrEventType: ((ctx: HandlerContext<never, never>) => void | Promise<void>) | string,
-): ParsedOn {
-  let selector: string;
-  let rawEvent: string;
-
-  if (typeof callbackOrEventType === "function") {
-    const atIdx = selectorOrCombined.lastIndexOf("@");
-    if (atIdx === -1) {
-      selector = "";
-      rawEvent = selectorOrCombined.startsWith("@")
-        ? selectorOrCombined.slice(1)
-        : selectorOrCombined;
-    } else {
-      selector = selectorOrCombined.slice(0, atIdx);
-      rawEvent = selectorOrCombined.slice(atIdx + 1);
-    }
-  } else {
-    selector = selectorOrCombined;
-    rawEvent = callbackOrEventType;
-  }
+function parseOnArgs(selectorOrCombined: string): ParsedOn {
+  const atIdx = selectorOrCombined.lastIndexOf("@");
+  const selector = atIdx === -1 ? "" : selectorOrCombined.slice(0, atIdx);
+  const rawEvent = atIdx === -1 ? selectorOrCombined : selectorOrCombined.slice(atIdx + 1);
 
   const parts = rawEvent.split(":");
   const eventType = parts[0]!;
   const modifiers = new Set(parts.slice(1));
 
-  const options: AddEventListenerOptions = {
-    once: modifiers.has("once"),
-    capture: modifiers.has("capture"),
-    passive: modifiers.has("passive"),
+  return {
+    selector,
+    eventType,
+    options: {
+      once: modifiers.has("once"),
+      capture: modifiers.has("capture"),
+      passive: modifiers.has("passive"),
+    },
   };
-
-  return { selector, eventType, options };
 }
 
 interface OnEntry<TInput, TStateMap extends Record<string, unknown>> {
@@ -661,16 +667,25 @@ class IlhaBuilder<
     );
   }
 
+  on<S extends OnSelectorString>(
+    selectorOrCombined: S,
+    handler: (
+      ctx: S extends `${string}@${infer E}:${string}`
+        ? HandlerContextFor<TInput, TStateMap, E>
+        : S extends `${string}@${infer E}`
+          ? HandlerContextFor<TInput, TStateMap, E>
+          : HandlerContext<TInput, TStateMap>,
+    ) => void | Promise<void>,
+  ): IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots>;
   on(
     selectorOrCombined: string,
-    callbackOrEventType:
-      | ((ctx: HandlerContext<TInput, TStateMap>) => void | Promise<void>)
-      | string,
-    handler?: (ctx: HandlerContext<TInput, TStateMap>) => void | Promise<void>,
+    handler: (ctx: HandlerContext<TInput, TStateMap>) => void | Promise<void>,
+  ): IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots>;
+  on(
+    selectorOrCombined: string,
+    handler: (ctx: HandlerContext<TInput, TStateMap>) => void | Promise<void>,
   ): IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots> {
-    const parsed = parseOnArgs(selectorOrCombined, callbackOrEventType as string);
-    const resolvedHandler =
-      typeof callbackOrEventType === "function" ? callbackOrEventType : handler!;
+    const parsed = parseOnArgs(selectorOrCombined);
 
     return new IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots>(
       this._schema,
@@ -682,7 +697,7 @@ class IlhaBuilder<
           selector: parsed.selector,
           event: parsed.eventType,
           options: parsed.options,
-          handler: resolvedHandler,
+          handler: handler as (ctx: HandlerContext<TInput, TStateMap>) => void | Promise<void>,
         },
       ],
       this._effects,
@@ -763,13 +778,11 @@ class IlhaBuilder<
             if (!slotDefs[name]) {
               return makeSlotAccessor(() => "");
             }
-
             if (ssr) {
               return makeSlotAccessor((props?: Record<string, unknown>) =>
                 slotDefs[name]!.toString(props),
               );
             }
-
             return makeSlotAccessor((props?: Record<string, unknown>) => {
               const json = props ? ` data-props='${escapeHtml(JSON.stringify(props))}'` : "";
               return `<div data-ilha-slot="${escapeHtml(name)}"${json}></div>`;
@@ -816,11 +829,6 @@ class IlhaBuilder<
       return state as IslandState<TStateMap>;
     }
 
-    // ── SSR render ────────────────────────────────────────────────────────────
-    // Returns a plain string if all deriveds are sync, or a Promise<string> if
-    // any derived is async. Callers can branch on the return type, or simply
-    // `await` it — awaiting a plain string is a no-op.
-
     function renderToString(props?: Partial<TInput>): string | Promise<string> {
       const input = resolveInput(props);
       const state = buildPlainState(input);
@@ -837,10 +845,7 @@ class IlhaBuilder<
             }),
           };
         } catch (err) {
-          return {
-            key: entry.key,
-            result: Promise.reject(err),
-          };
+          return { key: entry.key, result: Promise.reject(err) };
         }
       });
 
@@ -849,11 +854,7 @@ class IlhaBuilder<
       if (!hasAsync) {
         const derived: Record<string, DerivedValue<unknown>> = {};
         for (const r of results) {
-          derived[r.key] = {
-            loading: false,
-            value: r.result as unknown,
-            error: undefined,
-          };
+          derived[r.key] = { loading: false, value: r.result as unknown, error: undefined };
         }
         return fn({ state, derived: derived as IslandDerived<TDerivedMap>, input, slots });
       }
@@ -882,15 +883,11 @@ class IlhaBuilder<
         }),
       ).then((resolved) => {
         const derived: Record<string, DerivedValue<unknown>> = {};
-        for (const r of resolved) {
-          derived[r.key] = r.envelope;
-        }
+        for (const r of resolved) derived[r.key] = r.envelope;
         return fn({ state, derived: derived as IslandDerived<TDerivedMap>, input, slots });
       });
     }
 
-    // toString() is always sync — async deriveds fall back to loading: true.
-    // Safe for template literal interpolation where await is not possible.
     function renderToStringSyncOnly(props?: Partial<TInput>): string {
       const input = resolveInput(props);
       const state = buildPlainState(input);
@@ -906,7 +903,6 @@ class IlhaBuilder<
     function mountIsland(el: Element, props?: Partial<TInput>): () => void {
       const input = resolveInput(props);
 
-      // ── Hydration ─────────────────────────────────────────────────────────
       let snapshot: Record<string, unknown> | undefined;
       const rawState = el.getAttribute(STATE_ATTR);
       if (rawState) {
@@ -920,13 +916,11 @@ class IlhaBuilder<
       const state = buildSignalState(input, snapshot);
       const cleanups: Array<() => void> = [];
 
-      // ── Enter transition ──────────────────────────────────────────────────
       if (transition?.enter) {
         const result = transition.enter(el);
         if (result instanceof Promise) result.catch(console.error);
       }
 
-      // ── Derived signals ───────────────────────────────────────────────────
       const { proxy: derived, stop: stopDerived } = buildDerivedSignals<
         TInput,
         TStateMap,
@@ -934,7 +928,6 @@ class IlhaBuilder<
       >(deriveds as DerivedEntry<TInput, TStateMap>[], state, input);
       cleanups.push(stopDerived);
 
-      // ── Slot management ───────────────────────────────────────────────────
       const slotEls = new Map<string, Element>();
 
       function snapshotSlots() {
@@ -952,7 +945,6 @@ class IlhaBuilder<
         }
       }
 
-      // ── Event listeners ───────────────────────────────────────────────────
       type ListenerEntry = {
         target: Element;
         type: string;
@@ -966,10 +958,8 @@ class IlhaBuilder<
       function attachListeners() {
         for (const entry of ons) {
           if (entry.options.once && firedOnce.has(entry)) continue;
-
           const targets =
             entry.selector === "" ? [el] : Array.from(el.querySelectorAll(entry.selector));
-
           targets.forEach((target) => {
             const listener = (event: Event) => {
               if (entry.options.once) {
@@ -988,13 +978,7 @@ class IlhaBuilder<
             };
             const opts = { ...entry.options, once: false };
             target.addEventListener(entry.event, listener, opts);
-            listeners.push({
-              target,
-              type: entry.event,
-              fn: listener,
-              options: opts,
-              entry,
-            });
+            listeners.push({ target, type: entry.event, fn: listener, options: opts, entry });
           });
         }
       }
@@ -1006,15 +990,12 @@ class IlhaBuilder<
 
       const slots = makeSlotsProxy(false);
 
-      // ── Initial render ────────────────────────────────────────────────────
       el.innerHTML = fn({ state, derived, input, slots });
       attachListeners();
 
-      // ── Bind ──────────────────────────────────────────────────────────────
       let stopBindings = applyBindings(el, binds as BindEntry<TStateMap>[], state);
       cleanups.push(() => stopBindings());
 
-      // ── Mount child islands ───────────────────────────────────────────────
       for (const [name, childIsland] of Object.entries(slotDefs)) {
         const slotEl = el.querySelector(`[${SLOT_ATTR}="${name}"]`);
         if (!slotEl) continue;
@@ -1040,7 +1021,6 @@ class IlhaBuilder<
         cleanups.push(childIsland.mount(slotEl, slotProps));
       }
 
-      // ── Reactive re-render effect ─────────────────────────────────────────
       let initialized = false;
       const stopRender = effect(() => {
         const html = fn({ state, derived, input, slots });
@@ -1059,7 +1039,6 @@ class IlhaBuilder<
       cleanups.push(stopRender);
       cleanups.push(detachListeners);
 
-      // ── User effects ──────────────────────────────────────────────────────
       for (const entry of effects) {
         let userCleanup: (() => void) | void;
         const stopEffect = effect(() => {

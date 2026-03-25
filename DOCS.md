@@ -319,12 +319,18 @@ Attaches a delegated DOM event listener. The selector and event are combined in 
 ```
 
 ```ts
-.on("[data-btn]@click", handler) // delegated to matching child
-.on("@click", handler) // bound to the island root element
-.on("[data-btn]@click:once", handler) // fires once then detaches
+.on("[data-btn]@click", handler)                    // delegated to matching child
+.on("@click", handler)                              // bound to the island root element
+.on("[data-btn]@click:once", handler)               // fires once then detaches
 .on("[data-btn]@submit:passive", handler)
 .on("[data-btn]@scroll:passive:capture", handler)
 ```
+
+#### Autocomplete
+
+When using the `@`-syntax in an editor with TypeScript language server support, the event name portion (after `@`) will autocomplete from all `HTMLElementEventMap` keys. The handler's `ctx.event` is automatically narrowed — e.g. `@click` gives `MouseEvent`, `@keydown` gives `KeyboardEvent`.
+
+Custom event names (not in `HTMLElementEventMap`) are still accepted — they fall back to the base `Event` type in the handler.
 
 #### Modifiers
 
@@ -345,12 +351,12 @@ Modifiers can be combined in any order after the event type.
 });
 ```
 
-| Property | Type          | Description                   |
-| -------- | ------------- | ----------------------------- |
-| `state`  | `IslandState` | Reactive state accessors      |
-| `input`  | `TInput`      | Validated input props         |
-| `el`     | `Element`     | The island's root DOM element |
-| `event`  | `Event`       | The native DOM event          |
+| Property | Type                                                 | Description                   |
+| -------- | ---------------------------------------------------- | ----------------------------- |
+| `state`  | `IslandState`                                        | Reactive state accessors      |
+| `input`  | `TInput`                                             | Validated input props         |
+| `el`     | `Element`                                            | The island's root DOM element |
+| `event`  | `Event` (narrowed to e.g. `MouseEvent` for `@click`) | The native DOM event          |
 
 Async handlers are supported — errors are caught and logged.
 
@@ -799,6 +805,7 @@ import type {
   SignalAccessor,
   SlotAccessor,
   HandlerContext,
+  HandlerContextFor,
   MountOptions,
   MountResult,
 } from "ilha";
@@ -836,6 +843,32 @@ type HandlerContext<TInput, TStateMap> = {
   el: Element;
   event: Event;
 };
+```
+
+#### `HandlerContextFor<TInput, TStateMap, TEventName>`
+
+Like `HandlerContext`, but with `event` narrowed to the specific DOM event type for the given event name:
+
+```ts
+type HandlerContextFor<TInput, TStateMap, TEventName extends string> = {
+  state: IslandState<TStateMap>;
+  input: TInput;
+  el: Element;
+  event: TEventName extends keyof HTMLElementEventMap ? HTMLElementEventMap[TEventName] : Event;
+};
+```
+
+This is inferred automatically when using `.on()` with the `@`-syntax — you don't need to reference it directly unless you're extracting a handler function outside the builder:
+
+```ts
+import type { HandlerContextFor } from "ilha";
+
+function handleClick({ state, event }: HandlerContextFor<never, { count: number }, "click">) {
+  event.preventDefault(); // event: MouseEvent
+  state.count(state.count() + 1);
+}
+
+ilha.state("count", 0).on("[data-btn]@click", handleClick).render(...);
 ```
 
 #### `MountOptions`

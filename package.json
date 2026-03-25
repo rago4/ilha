@@ -22,7 +22,8 @@
   "scripts": {
     "build": "tsc && tsdown",
     "test": "bun test",
-    "playground": "bun playground/index.html",
+    "playground:dev": "bun playground/index.html",
+    "tour:dev": "bun tour/index.html",
     "lint": "oxlint",
     "fmt": "oxfmt",
     "prepare": "husky",

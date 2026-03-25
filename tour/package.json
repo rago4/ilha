@@ -1,0 +1,22 @@
+{
+  "name": "@ilha/tour",
+  "version": "0.0.1",
+  "type": "module",
+  "module": "src/index.ts",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "basecoat-css": "^0.3.11",
+    "ilha": "https://pkg.pr.new/guarana-studio/ilha@main"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.2.2",
+    "tailwindcss": "^4.2.2",
+    "typescript": "^5",
+    "vite": "^8.0.2",
+    "zod": "^4.3.6"
+  }
+}

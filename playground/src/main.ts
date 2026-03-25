@@ -4,6 +4,7 @@ import z from "zod";
 const counter = ilha
   .input(z.object({ count: z.number().default(0) }))
   .state("count", ({ count }) => count)
+  .derived("doubled", ({ state }) => state.count() * 2)
   .bind("[data-count-input]", "count")
   .on("[data-increment]@click", ({ state }) => {
     state.count(state.count() + 1);
@@ -14,9 +15,10 @@ const counter = ilha
       console.log("cleanup", state.count());
     };
   })
-  .render(({ state }) => {
+  .render(({ state, derived }) => {
     return html`
-      <div>${state.count()}</div>
+      <div>Count: ${state.count()}</div>
+      <div>Doubled: ${derived.doubled.value}</div>
       <input type="number" data-count-input value="${state.count()}" />
       <button data-increment>Increment</button>
     `;

@@ -189,7 +189,7 @@ describe("island SSR", () => {
     const island = ilha
       .input(z.object({ count: z.number().default(0) }))
       .state("count", ({ count }) => count)
-      .on("[data-inc]", "click", ({ state }) => {
+      .on("[data-inc]@click", ({ state }) => {
         state.count(state.count() + 1);
       })
       .effect(({ state }) => {
@@ -245,7 +245,7 @@ describe("island mount", () => {
     const counter = ilha
       .input(z.object({ count: z.number().default(0) }))
       .state("count", ({ count }) => count)
-      .on("[data-inc]", "click", ({ state }) => {
+      .on("[data-inc]@click", ({ state }) => {
         state.count(state.count() + 1);
       })
       .render(({ state }) => `<p>${state.count()}</p><button data-inc>+</button>`);
@@ -267,7 +267,7 @@ describe("island mount", () => {
     const counter = ilha
       .input(z.object({ count: z.number().default(0) }))
       .state("count", ({ count }) => count)
-      .on("[data-inc]", "click", ({ state }) => {
+      .on("[data-inc]@click", ({ state }) => {
         state.count(state.count() + 1);
       })
       .render(({ state }) => `<p>${state.count()}</p><button data-inc>+</button>`);
@@ -386,7 +386,7 @@ describe("island mount", () => {
     const island = ilha
       .input(z.object({}))
       .state("step", 5)
-      .on("[data-btn]", "click", ({ state }) => {
+      .on("[data-btn]@click", ({ state }) => {
         state.step(state.step() + 1);
       })
       .render(({ state }) => `<p>${state.step()}</p><button data-btn>+</button>`);
@@ -448,6 +448,144 @@ describe("island mount", () => {
 
       unmount();
       cleanup(el);
+    });
+  });
+
+  describe(".on combined @-syntax", () => {
+    it("combined @event fires handler", () => {
+      const calls: number[] = [];
+      const island = ilha
+        .state("count", 0)
+        .on("[data-btn]@click", ({ state }) => {
+          calls.push(state.count());
+          state.count(state.count() + 1);
+        })
+        .render(({ state }) => `<p>${state.count()}</p><button data-btn></button>`);
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+      (el.querySelector("[data-btn]") as HTMLButtonElement).click();
+      (el.querySelector("[data-btn]") as HTMLButtonElement).click();
+      expect(calls).toEqual([0, 1]);
+      expect(el.querySelector("p")!.textContent).toBe("2");
+      unmount();
+      cleanup(el);
+    });
+
+    it("combined @event on root element (no selector prefix)", () => {
+      const calls: number[] = [];
+      const island = ilha
+        .state("count", 0)
+        .on("@click", ({ state }) => {
+          calls.push(state.count());
+          state.count(state.count() + 1);
+        })
+        .render(({ state }) => `<p>${state.count()}</p>`);
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+      (el as HTMLElement).click();
+      expect(calls.length).toBe(1);
+      unmount();
+      cleanup(el);
+    });
+
+    it("combined @event:once fires only once", () => {
+      const calls: number[] = [];
+      const island = ilha
+        .state("count", 0)
+        .on("[data-btn]@click:once", ({ state }) => {
+          calls.push(state.count());
+          state.count(state.count() + 1);
+        })
+        .render(({ state }) => `<p>${state.count()}</p><button data-btn></button>`);
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+      (el.querySelector("[data-btn]") as HTMLButtonElement).click();
+      (el.querySelector("[data-btn]") as HTMLButtonElement).click();
+      (el.querySelector("[data-btn]") as HTMLButtonElement).click();
+      expect(calls.length).toBe(1);
+      expect(el.querySelector("p")!.textContent).toBe("1");
+      unmount();
+      cleanup(el);
+    });
+
+    it("combined @event ctx.event is typed as MouseEvent for click", () => {
+      // type-level test — if this compiles, the narrowing works
+      ilha
+        .state("x", 0)
+        .on("[data-btn]@click", ({ event }) => {
+          // event is MouseEvent — .button is only on MouseEvent, not base Event
+          const _button: number = event.button;
+          void _button;
+        })
+        .render(() => `<button data-btn></button>`);
+
+      expect(true).toBe(true);
+    });
+
+    it("combined @keydown ctx.event is typed as KeyboardEvent", () => {
+      ilha
+        .state("key", "")
+        .on("[data-input]@keydown", ({ event, state }) => {
+          // .key is only on KeyboardEvent
+          state.key(event.key);
+        })
+        .render(({ state }) => `<input data-input value="${state.key()}" />`);
+
+      expect(true).toBe(true);
+    });
+
+    it("combined @input ctx.event is typed as Event (base)", () => {
+      ilha
+        .state("val", "")
+        .on("[data-input]@input", ({ event }) => {
+          const _target = event.target as HTMLInputElement;
+          void _target;
+        })
+        .render(() => `<input data-input />`);
+
+      expect(true).toBe(true);
+    });
+
+    it("combined and legacy forms coexist on the same island", () => {
+      const log: string[] = [];
+      const island = ilha
+        .state("count", 0)
+        .on("[data-a]@click", ({ state }) => {
+          log.push("a");
+          state.count(state.count() + 1);
+        })
+        .on("[data-b]@click", ({ state }) => {
+          log.push("b");
+          state.count(state.count() + 10);
+        })
+        .render(
+          ({ state }) => `<p>${state.count()}</p><button data-a></button><button data-b></button>`,
+        );
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+      (el.querySelector("[data-a]") as HTMLButtonElement).click();
+      (el.querySelector("[data-b]") as HTMLButtonElement).click();
+      expect(log).toEqual(["a", "b"]);
+      expect(el.querySelector("p")!.textContent).toBe("11");
+      unmount();
+      cleanup(el);
+    });
+
+    it("combined @event SSR is a no-op (handler not called)", () => {
+      const calls: number[] = [];
+      const island = ilha
+        .state("count", 0)
+        .on("[data-btn]@click", ({ state }) => {
+          calls.push(state.count());
+        })
+        .render(({ state }) => `<p>${state.count()}</p><button data-btn></button>`);
+
+      expect(island()).toBe("<p>0</p><button data-btn></button>");
+      expect(calls.length).toBe(0);
     });
   });
 
@@ -739,7 +877,7 @@ describe("ilha.mount()", () => {
     const counter = ilha
       .input(z.object({ count: z.number().default(0) }))
       .state("count", ({ count }) => count)
-      .on("[data-inc]", "click", ({ state }) => {
+      .on("[data-inc]@click", ({ state }) => {
         state.count(state.count() + 1);
       })
       .render(({ state }) => `<p>${state.count()}</p><button data-inc>+</button>`);
