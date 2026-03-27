@@ -1,16 +1,18 @@
 {
-  "name": "@ilha/tour",
+  "name": "website",
   "version": "0.0.1",
   "type": "module",
-  "module": "src/index.ts",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview"
   },
   "dependencies": {
+    "alien-signals": "^3.1.2",
     "basecoat-css": "^0.3.11",
-    "ilha": "https://pkg.pr.new/guarana-studio/ilha@main"
+    "dedent": "^1.7.2",
+    "ilha": "workspace:*",
+    "rou3": "^0.8.1"
   },
   "devDependencies": {
     "@tailwindcss/vite": "^4.2.2",

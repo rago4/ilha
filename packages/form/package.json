@@ -1,0 +1,30 @@
+{
+  "name": "@ilha/form",
+  "version": "0.0.1",
+  "description": "Typed forms.",
+  "license": "MIT",
+  "author": "Ryuz <ryuzer@proton.me>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/guarana-studio/ilha.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "module": "src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc && tsdown",
+    "test": "bun test",
+    "cleanup": "rimraf dist node_modules"
+  },
+  "devDependencies": {
+    "zod": "^4.3.6"
+  }
+}

@@ -1,5 +1,3 @@
-// src/index.ts
-
 import { signal, effect, setActiveSub } from "alien-signals";
 
 // ─────────────────────────────────────────────
@@ -241,32 +239,6 @@ function makePlainDerived<TDerivedMap extends Record<string, unknown>>(
   return derived as IslandDerived<TDerivedMap>;
 }
 
-async function makeAsyncDerived<TDerivedMap extends Record<string, unknown>>(
-  entries: DerivedEntry<unknown, Record<string, unknown>>[],
-  state: Record<string, unknown>,
-  input: unknown,
-): Promise<IslandDerived<TDerivedMap>> {
-  const ac = new AbortController();
-  const derived: Record<string, DerivedValue<unknown>> = {};
-  await Promise.all(
-    entries.map(async (entry) => {
-      try {
-        const result = await Promise.resolve(
-          entry.fn({ state: state as never, input, signal: ac.signal }),
-        );
-        derived[entry.key] = { loading: false, value: result, error: undefined };
-      } catch (err) {
-        derived[entry.key] = {
-          loading: false,
-          value: undefined,
-          error: err instanceof Error ? err : new Error(String(err)),
-        };
-      }
-    }),
-  );
-  return derived as IslandDerived<TDerivedMap>;
-}
-
 function buildDerivedSignals<
   TInput,
   TStateMap extends Record<string, unknown>,
@@ -347,9 +319,15 @@ function buildDerivedSignals<
 // Bind
 // ─────────────────────────────────────────────
 
+// An external signal accessor: any zero/one-arg callable that reads/writes a value.
+// Intentionally loose so ContextSignal<T> and custom signals satisfy it without
+// needing the SIGNAL_ACCESSOR brand (which is internal to ilha state).
+type ExternalSignal<T = unknown> = { (): T; (value: T): void };
+
 interface BindEntry<TStateMap extends Record<string, unknown>> {
   selector: string;
-  stateKey: keyof TStateMap & string;
+  // Either a key into the island's own state, or a raw external signal accessor.
+  target: (keyof TStateMap & string) | ExternalSignal;
 }
 
 function resolveBindConfig(el: Element): {
@@ -410,15 +388,24 @@ function applyBindings<TStateMap extends Record<string, unknown>>(
   const cleanups: Array<() => void> = [];
 
   for (const binding of bindings) {
+    // Resolve to a uniform read/write accessor regardless of whether the
+    // binding target is a local state key or an external signal.
+    const accessor: ExternalSignal =
+      typeof binding.target === "function"
+        ? binding.target
+        : (state[binding.target as keyof TStateMap] as ExternalSignal);
+
     const targets =
       binding.selector === "" ? [el] : Array.from(el.querySelectorAll<Element>(binding.selector));
+
     for (const target of targets) {
       const { event, read, write } = resolveBindConfig(target);
-      const accessor = state[binding.stateKey] as SignalAccessor<unknown>;
       const input = target as HTMLInputElement;
       const isRadio =
         input.tagName.toLowerCase() === "input" && input.type?.toLowerCase() === "radio";
+
       write(target, accessor());
+
       const listener = () => {
         const raw = read(target);
         if (isRadio && raw === undefined) return;
@@ -432,8 +419,9 @@ function applyBindings<TStateMap extends Record<string, unknown>>(
         } else {
           value = raw;
         }
-        accessor(value);
+        (accessor as (v: unknown) => void)(value);
       };
+
       target.addEventListener(event, listener);
       cleanups.push(() => target.removeEventListener(event, listener));
     }
@@ -452,7 +440,10 @@ export type IslandState<TStateMap extends Record<string, unknown>> = {
   [K in keyof TStateMap]: SignalAccessor<TStateMap[K]>;
 };
 
-export interface Island<TInput, TStateMap extends Record<string, unknown>> {
+export interface Island<
+  TInput = Record<string, unknown>,
+  _TStateMap extends Record<string, unknown> = Record<string, unknown>,
+> {
   (props?: Partial<TInput>): string | Promise<string>;
   toString(props?: Partial<TInput>): string;
   mount(el: Element, props?: Partial<TInput>): () => void;
@@ -592,16 +583,34 @@ class IlhaBuilder<
   TDerivedMap extends Record<string, unknown> = Record<string, never>,
   TSlots extends SlotMap = Record<string, never>,
 > {
+  readonly _schema: StandardSchemaV1 | null;
+  readonly _states: StateEntry<TInput>[];
+  readonly _deriveds: DerivedEntry<TInput, TStateMap>[];
+  readonly _ons: OnEntry<TInput, TStateMap>[];
+  readonly _effects: EffectEntry<TInput, TStateMap>[];
+  readonly _slots: Record<string, AnyIsland>;
+  readonly _transition: TransitionOptions | null;
+  readonly _binds: BindEntry<TStateMap>[];
+
   constructor(
-    private readonly _schema: StandardSchemaV1 | null,
-    private readonly _states: StateEntry<TInput>[],
-    private readonly _deriveds: DerivedEntry<TInput, TStateMap>[],
-    private readonly _ons: OnEntry<TInput, TStateMap>[],
-    private readonly _effects: EffectEntry<TInput, TStateMap>[],
-    private readonly _slots: Record<string, AnyIsland>,
-    private readonly _transition: TransitionOptions | null,
-    private readonly _binds: BindEntry<TStateMap>[],
-  ) {}
+    schema: StandardSchemaV1 | null,
+    states: StateEntry<TInput>[],
+    deriveds: DerivedEntry<TInput, TStateMap>[],
+    ons: OnEntry<TInput, TStateMap>[],
+    effects: EffectEntry<TInput, TStateMap>[],
+    slots: Record<string, AnyIsland>,
+    transition: TransitionOptions | null,
+    binds: BindEntry<TStateMap>[],
+  ) {
+    this._schema = schema;
+    this._states = states;
+    this._deriveds = deriveds;
+    this._ons = ons;
+    this._effects = effects;
+    this._slots = slots;
+    this._transition = transition;
+    this._binds = binds;
+  }
 
   input<S extends StandardSchemaV1>(
     schema: S,
@@ -651,9 +660,20 @@ class IlhaBuilder<
     );
   }
 
+  // Overload 1: bind to local state key (existing behaviour)
   bind(
     selector: string,
     stateKey: keyof TStateMap & string,
+  ): IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots>;
+  // Overload 2: bind to an external signal (e.g. ilha.context)
+  bind<T>(
+    selector: string,
+    externalSignal: ExternalSignal<T>,
+  ): IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots>;
+  // Implementation
+  bind(
+    selector: string,
+    target: (keyof TStateMap & string) | ExternalSignal,
   ): IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots> {
     return new IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots>(
       this._schema,
@@ -663,7 +683,7 @@ class IlhaBuilder<
       this._effects,
       this._slots,
       this._transition,
-      [...this._binds, { selector, stateKey }],
+      [...this._binds, { selector, target }],
     );
   }
 

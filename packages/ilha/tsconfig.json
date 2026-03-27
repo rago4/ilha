@@ -1,0 +1,10 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "paths": {
+      "ilha": ["./src/index.ts"]
+    }
+  },
+  "include": ["src/**/*"],
+  "exclude": ["happydom.ts", "dist", "node_modules"]
+}

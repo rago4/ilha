@@ -1715,6 +1715,7 @@ describe("ilha.mount()", () => {
 
     it("client: sync derived two instances are independent", () => {
       let accA!: (v?: number) => number | void;
+      // @ts-expect-error
       let accB!: (v?: number) => number | void;
 
       const island = ilha

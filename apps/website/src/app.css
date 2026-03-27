@@ -1,2 +1,6 @@
 @import "tailwindcss";
 @import "basecoat-css";
+
+[data-ilha-slot] {
+  display: contents;
+}
