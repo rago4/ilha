@@ -11,7 +11,6 @@
     "alien-signals": "^3.1.2",
     "basecoat-css": "^0.3.11",
     "dedent": "^1.7.2",
-    "ilha": "workspace:*",
     "rou3": "^0.8.1"
   },
   "devDependencies": {
