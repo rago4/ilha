@@ -1,4 +1,5 @@
 import { signal, effect, setActiveSub } from "alien-signals";
+import { morphInner } from "morphlex";
 
 // ─────────────────────────────────────────────
 // Standard Schema V1 (inlined, type-only)
@@ -394,7 +395,6 @@ function applyBindings<TStateMap extends Record<string, unknown>>(
       const isRadio =
         (target as HTMLInputElement).tagName.toLowerCase() === "input" &&
         (target as HTMLInputElement).type?.toLowerCase() === "radio";
-
       write(target, accessor());
 
       const listener = () => {
@@ -494,10 +494,6 @@ type EffectContext<TInput, TStateMap extends Record<string, unknown>> = {
   input: TInput;
   host: Element;
 };
-
-// ─────────────────────────────────────────────
-// OnMountContext — now includes derived
-// ─────────────────────────────────────────────
 
 export type OnMountContext<
   TInput,
@@ -602,7 +598,6 @@ interface EffectEntry<TInput, TStateMap extends Record<string, unknown>> {
   fn: (ctx: EffectContext<TInput, TStateMap>) => (() => void) | void;
 }
 
-// OnMountEntry is now generic over TDerivedMap too
 interface OnMountEntry<
   TInput,
   TStateMap extends Record<string, unknown>,
@@ -798,7 +793,6 @@ class IlhaBuilder<
     );
   }
 
-  // onMount now threads TDerivedMap through so the callback sees derived
   onMount(
     fn: (ctx: OnMountContext<TInput, TStateMap, TDerivedMap>) => (() => void) | void,
   ): IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots> {
@@ -865,7 +859,7 @@ class IlhaBuilder<
       return validateSchema(schema, value) as TInput;
     }
 
-    function makeSlotsProxy(ssr: boolean): SlotsProxy<TSlots> {
+    function makeSlotsProxy(ssr: boolean, host?: Element): SlotsProxy<TSlots> {
       return new Proxy(
         {},
         {
@@ -878,6 +872,12 @@ class IlhaBuilder<
               );
             }
             return makeSlotAccessor((props?: Record<string, unknown>) => {
+              // On re-renders, mirror the live slot element's current outerHTML
+              // back into the string so morphlex sees no diff and leaves it alone.
+              const liveSlot = host?.querySelector(`[${SLOT_ATTR}="${escapeHtml(name)}"]`);
+              if (liveSlot) return liveSlot.outerHTML;
+
+              // First render — emit the empty placeholder as before
               const json = props ? ` ${PROPS_ATTR}='${escapeHtml(JSON.stringify(props))}'` : "";
               return `<div ${SLOT_ATTR}="${escapeHtml(name)}"${json}></div>`;
             });
@@ -994,7 +994,6 @@ class IlhaBuilder<
     }
 
     function mountIsland(host: Element, props?: Partial<TInput>): () => void {
-      // If caller didn't pass props, fall back to data-ilha-props attribute
       if (props === undefined) {
         const rawProps = host.getAttribute(PROPS_ATTR);
         if (rawProps) {
@@ -1018,7 +1017,6 @@ class IlhaBuilder<
         }
       }
 
-      // Split snapshot into state signals and derived envelopes
       const stateSnapshot = snapshotRaw
         ? (Object.fromEntries(
             Object.entries(snapshotRaw).filter(([k]) => k !== "_derived" && k !== "_skipOnMount"),
@@ -1045,20 +1043,37 @@ class IlhaBuilder<
       >(deriveds as DerivedEntry<TInput, TStateMap>[], state, input, derivedSnapshot);
       cleanups.push(stopDerived);
 
-      const slotEls = new Map<string, Element>();
+      // ─── slot bookkeeping ───────────────────────────────────────────────
+      // Idiomorph morphs slot placeholder divs in-place, so we no longer need
+      // to snapshot/restore them manually — morph preserves existing DOM nodes
+      // that match by identity. We still track mounted child islands so we can
+      // unmount them on cleanup.
+      const slotCleanups = new Map<string, () => void>();
+      const slotEls = new Map<string, Element>(); // ← track live element refs
 
-      function snapshotSlots() {
-        slotEls.clear();
-        for (const name of Object.keys(slotDefs)) {
-          const existing = host.querySelector(`[${SLOT_ATTR}="${name}"]`);
-          if (existing) slotEls.set(name, existing);
-        }
-      }
+      function mountSlots() {
+        for (const [name, childIsland] of Object.entries(slotDefs)) {
+          const slotEl = host.querySelector(`[${SLOT_ATTR}="${name}"]`);
+          if (!slotEl) continue;
 
-      function restoreSlots() {
-        for (const [name, slotEl] of slotEls) {
-          const placeholder = host.querySelector(`[${SLOT_ATTR}="${name}"]`);
-          if (placeholder) placeholder.replaceWith(slotEl);
+          // If morphlex kept the same node alive, the child island is still
+          // running — don't remount it.
+          if (slotEls.get(name) === slotEl) continue;
+
+          slotEls.set(name, slotEl);
+          slotCleanups.get(name)?.();
+
+          let slotProps: Record<string, unknown> | undefined;
+          const rawProps = slotEl.getAttribute(PROPS_ATTR) ?? slotEl.getAttribute("data-props");
+          if (rawProps) {
+            try {
+              slotProps = JSON.parse(rawProps) as Record<string, unknown>;
+            } catch {
+              console.warn(`[ilha] Failed to parse props on [${SLOT_ATTR}="${name}"]`);
+            }
+          }
+
+          slotCleanups.set(name, childIsland.mount(slotEl, slotProps));
         }
       }
 
@@ -1114,34 +1129,20 @@ class IlhaBuilder<
         listeners.length = 0;
       }
 
-      const slots = makeSlotsProxy(false);
+      const slots = makeSlotsProxy(false, host);
 
+      // ─── initial render ─────────────────────────────────────────────────
+      // First paint can still use innerHTML — nothing to preserve yet.
       host.innerHTML = fn({ state, derived, input, slots });
       attachListeners();
 
       let stopBindings = applyBindings(host, binds as BindEntry<TStateMap>[], state);
       cleanups.push(() => stopBindings());
 
-      for (const [name, childIsland] of Object.entries(slotDefs)) {
-        const slotEl = host.querySelector(`[${SLOT_ATTR}="${name}"]`);
-        if (!slotEl) continue;
-        slotEls.set(name, slotEl);
+      mountSlots();
+      cleanups.push(() => slotCleanups.forEach((unmount) => unmount()));
 
-        let slotProps: Record<string, unknown> | undefined;
-        // try data-ilha-props first, then data-props as fallback
-        const rawProps = slotEl.getAttribute(PROPS_ATTR) ?? slotEl.getAttribute("data-props");
-        if (rawProps) {
-          try {
-            slotProps = JSON.parse(rawProps) as Record<string, unknown>;
-          } catch {
-            console.warn(`[ilha] Failed to parse props on [${SLOT_ATTR}="${name}"]`);
-          }
-        }
-
-        cleanups.push(childIsland.mount(slotEl, slotProps));
-      }
-
-      // Run onMount callbacks — derived is now passed in ctx
+      // Run onMount callbacks
       for (const entry of onMounts) {
         const prevSub = setActiveSub(undefined);
         let userCleanup: (() => void) | void;
@@ -1153,6 +1154,12 @@ class IlhaBuilder<
         if (userCleanup) cleanups.push(userCleanup);
       }
 
+      // ─── reactive re-render via morph ────────────────────────────────────
+      // Idiomorph diffs the new HTML string against the live DOM, patching only
+      // what changed. Focused inputs, scroll positions, and child island nodes
+      // survive intact. After each morph we re-attach listeners and bindings
+      // (same as before) and re-mount any slot children whose placeholder node
+      // may have been recreated by the morph.
       let initialized = false;
       const stopRender = effect(() => {
         const html = fn({ state, derived, input, slots });
@@ -1160,13 +1167,19 @@ class IlhaBuilder<
           initialized = true;
           return;
         }
-        snapshotSlots();
+
         detachListeners();
         stopBindings();
-        host.innerHTML = html;
-        restoreSlots();
+
+        const tpl = document.createElement("template");
+        tpl.innerHTML = `<div>${html}</div>`;
+        morphInner(host, tpl.content.firstElementChild as Element);
+
         attachListeners();
         stopBindings = applyBindings(host, binds as BindEntry<TStateMap>[], state);
+
+        // Re-mount slots whose placeholder may have been morphed away
+        mountSlots();
       });
       cleanups.push(stopRender);
       cleanups.push(detachListeners);

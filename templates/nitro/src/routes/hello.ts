@@ -1,14 +1,14 @@
-import ilha, { html } from "ilha";
+import ilha, { html, type } from "ilha";
 import { defineHandler } from "nitro";
-import * as h3 from "nitro/h3";
 
-const counter = ilha.state("count", 0).render(
-  ({ state }) =>
+const greet = ilha.input(type<{ name: string }>()).render(
+  ({ input }) =>
     html`
-      <p>Counter: ${state.count()}</p>
+      <p>Hello, ${input.name}</p>
     `,
 );
 
-export default defineHandler(async () => {
-  return h3.html(await counter());
+export default defineHandler(async (event) => {
+  const url = new URL(event.req.url);
+  return greet({ name: url.searchParams.get("name") ?? "" });
 });

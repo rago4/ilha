@@ -1,11 +1,19 @@
-import ilha, { html, mount } from "ilha";
+import ilha, { html, mount, raw } from "ilha";
 
 import "./style.css";
 
-const app = ilha.render(
-  () => html`
-    <p>ok</p>
-  `,
-);
+const app = ilha
+  .state("name", "Alice")
+  .derived("greeting", async ({ state, signal }) => {
+    const req = await fetch(`/hello?name=${state.name()}`, { signal });
+    return req.text();
+  })
+  .bind("#name", "name")
+  .render(
+    ({ derived }) => html`
+      <input id="name" type="text" />
+      ${raw(derived.greeting.value ?? "")}
+    `,
+  );
 
 mount({ app });
