@@ -512,11 +512,9 @@ describe("island mount", () => {
     });
 
     it("combined @event ctx.event is typed as MouseEvent for click", () => {
-      // type-level test — if this compiles, the narrowing works
       ilha
         .state("x", 0)
         .on("[data-btn]@click", ({ event }) => {
-          // event is MouseEvent — .button is only on MouseEvent, not base Event
           const _button: number = event.button;
           void _button;
         })
@@ -529,7 +527,6 @@ describe("island mount", () => {
       ilha
         .state("key", "")
         .on("[data-input]@keydown", ({ event, state }) => {
-          // .key is only on KeyboardEvent
           state.key(event.key);
         })
         .render(({ state }) => `<input data-input value="${state.key()}" />`);
@@ -688,7 +685,7 @@ describe("island mount", () => {
       const a = context("test-singleton", 0);
       const b = context("test-singleton", 999);
       expect(a).toBe(b);
-      expect(a()).toBe(0); // initial value from first registration wins
+      expect(a()).toBe(0);
     });
   });
 
@@ -793,38 +790,283 @@ describe("island mount", () => {
       const el = makeEl();
       el.setAttribute("data-ilha-state", JSON.stringify({ count: 99 }));
 
-      // passing count: 1 via props — snapshot should win
       const unmount = counter.mount(el, { count: 1 });
       expect(el.querySelector("p")!.textContent).toBe("99");
 
       unmount();
       cleanup(el);
     });
+  });
 
-    it("hydrate: true in mountAll preserves SSR HTML until render", () => {
+  // ─────────────────────────────────────────────
+  // .hydratable()
+  // ─────────────────────────────────────────────
+
+  describe(".hydratable()", () => {
+    beforeEach(() => {
       document.body.innerHTML = "";
+    });
 
-      const counter = ilha
-        .input(z.object({ count: z.number().default(0) }))
-        .state("count", ({ count }) => count)
-        .render(({ state }) => `<p>${state.count()}</p>`);
+    // ── SSR output ────────────────────────────
 
-      const el = document.createElement("div");
-      el.setAttribute("data-ilha", "counter");
-      el.setAttribute("data-props", JSON.stringify({ count: 3 }));
-      el.innerHTML = "<p>ssr</p>";
-      document.body.appendChild(el);
+    describe("SSR output", () => {
+      it("wraps output in a container with data-ilha attribute", async () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => `<p>${state.count()}</p>`);
 
-      const { unmount } = mount({ counter } as never, { hydrate: true });
-      // after mount island renders with props
-      expect(el.querySelector("p")!.textContent).toBe("3");
-      unmount();
+        const result = await counter.hydratable({ count: 3 }, { name: "counter" });
+        expect(result).toContain('data-ilha="counter"');
+      });
+
+      it("embeds serialised props in data-ilha-props attribute", async () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => `<p>${state.count()}</p>`);
+
+        const result = await counter.hydratable({ count: 7 }, { name: "counter" });
+        expect(result).toContain("data-ilha-props=");
+        // props are HTML-entity encoded — decode to verify the JSON content
+        const doc = new DOMParser().parseFromString(result, "text/html");
+        const wrapper = doc.querySelector("[data-ilha='counter']")!;
+        const props = JSON.parse(wrapper.getAttribute("data-ilha-props")!);
+        expect(props.count).toBe(7);
+      });
+
+      it("renders island content inside the wrapper", async () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => `<p>${state.count()}</p>`);
+
+        const result = await counter.hydratable({ count: 5 }, { name: "counter" });
+        expect(result).toContain("<p>5</p>");
+      });
+
+      it("passes provided props to the island render", async () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(42) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => `<p>${state.count()}</p>`);
+
+        // explicitly pass 42 so the rendered HTML reflects it
+        const result = await counter.hydratable({ count: 42 }, { name: "counter" });
+        expect(result).toContain("<p>42</p>");
+        const doc = new DOMParser().parseFromString(result, "text/html");
+        const props = JSON.parse(
+          doc.querySelector("[data-ilha='counter']")!.getAttribute("data-ilha-props")!,
+        );
+        expect(props.count).toBe(42);
+      });
+
+      it("returns a Promise<string>", () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => `<p>${state.count()}</p>`);
+
+        const result = counter.hydratable({ count: 1 }, { name: "counter" });
+        expect(result).toBeInstanceOf(Promise);
+      });
+
+      it("uses the provided 'as' tag as the wrapper element", async () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => `<p>${state.count()}</p>`);
+
+        const result = await counter.hydratable({ count: 1 }, { name: "counter", as: "section" });
+        expect(result).toMatch(/^<section/);
+        expect(result).toMatch(/<\/section>$/);
+      });
+
+      it("defaults to a div wrapper when 'as' is not provided", async () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => `<p>${state.count()}</p>`);
+
+        const result = await counter.hydratable({ count: 1 }, { name: "counter" });
+        expect(result).toMatch(/^<div/);
+        expect(result).toMatch(/<\/div>$/);
+      });
+    });
+
+    // ── Client mount via base island ──────────────────────────
+
+    describe("client mount via base island", () => {
+      it("reads props from data-ilha-props when none are passed to mount()", () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => `<p>${state.count()}</p>`);
+
+        const el = document.createElement("div");
+        el.setAttribute("data-ilha", "counter");
+        // data-ilha-props is HTML-entity encoded by hydratable; simulate that
+        el.setAttribute("data-ilha-props", JSON.stringify({ count: 11 }));
+        el.innerHTML = "<p>ssr</p>";
+        document.body.appendChild(el);
+
+        const unmount = counter.mount(el);
+        expect(el.querySelector("p")!.textContent).toBe("11");
+        unmount();
+      });
+
+      it("explicit props passed to mount() override data-ilha-props", () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => `<p>${state.count()}</p>`);
+
+        const el = document.createElement("div");
+        el.setAttribute("data-ilha", "counter");
+        el.setAttribute("data-ilha-props", JSON.stringify({ count: 1 }));
+        document.body.appendChild(el);
+
+        const unmount = counter.mount(el, { count: 99 });
+        expect(el.querySelector("p")!.textContent).toBe("99");
+        unmount();
+      });
+
+      it("is reactive after hydration — state changes update the DOM", () => {
+        let accessor!: (v?: number) => number | void;
+
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => {
+            accessor = state.count as typeof accessor;
+            return `<p>${state.count()}</p>`;
+          });
+
+        const el = document.createElement("div");
+        el.setAttribute("data-ilha", "counter");
+        el.setAttribute("data-ilha-props", JSON.stringify({ count: 0 }));
+        document.body.appendChild(el);
+
+        const unmount = counter.mount(el);
+        accessor(7);
+        expect(el.querySelector("p")!.textContent).toBe("7");
+        unmount();
+      });
+
+      it("unmount tears down the hydrated island", () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .on("[data-inc]@click", ({ state }) => {
+            state.count(state.count() + 1);
+          })
+          .render(({ state }) => `<p>${state.count()}</p><button data-inc>+</button>`);
+
+        const el = document.createElement("div");
+        el.setAttribute("data-ilha", "counter");
+        el.setAttribute("data-ilha-props", JSON.stringify({ count: 0 }));
+        document.body.appendChild(el);
+
+        const unmount = counter.mount(el);
+        unmount();
+
+        (el.querySelector("[data-inc]") as HTMLButtonElement).click();
+        expect(el.querySelector("p")!.textContent).toBe("0");
+      });
+    });
+
+    // ── ilha.mount() auto-discovery with hydratable islands ──
+
+    describe("ilha.mount() auto-discovery", () => {
+      it("discovers all [data-ilha='counter'] elements and mounts them", () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => `<p>${state.count()}</p>`);
+
+        const elA = document.createElement("div");
+        elA.setAttribute("data-ilha", "counter");
+        elA.setAttribute("data-ilha-props", JSON.stringify({ count: 1 }));
+
+        const elB = document.createElement("div");
+        elB.setAttribute("data-ilha", "counter");
+        elB.setAttribute("data-ilha-props", JSON.stringify({ count: 2 }));
+
+        document.body.appendChild(elA);
+        document.body.appendChild(elB);
+
+        const { unmount } = mount({ counter } as never);
+        expect(elA.querySelector("p")!.textContent).toBe("1");
+        expect(elB.querySelector("p")!.textContent).toBe("2");
+        unmount();
+      });
+
+      it("unmount tears down all discovered instances", () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .on("[data-inc]@click", ({ state }) => {
+            state.count(state.count() + 1);
+          })
+          .render(({ state }) => `<p>${state.count()}</p><button data-inc>+</button>`);
+
+        const el = document.createElement("div");
+        el.setAttribute("data-ilha", "counter");
+        el.setAttribute("data-ilha-props", JSON.stringify({ count: 0 }));
+        document.body.appendChild(el);
+
+        const { unmount } = mount({ counter } as never);
+        unmount();
+
+        (el.querySelector("[data-inc]") as HTMLButtonElement).click();
+        expect(el.querySelector("p")!.textContent).toBe("0");
+      });
+
+      it("scopes discovery to provided root element", () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => `<p>${state.count()}</p>`);
+
+        const inside = document.createElement("div");
+        inside.setAttribute("data-ilha", "counter");
+        inside.setAttribute("data-ilha-props", JSON.stringify({ count: 1 }));
+
+        const outside = document.createElement("div");
+        outside.setAttribute("data-ilha", "counter");
+        outside.setAttribute("data-ilha-props", JSON.stringify({ count: 2 }));
+        outside.innerHTML = "<p>original</p>";
+
+        const root = document.createElement("section");
+        root.appendChild(inside);
+        document.body.appendChild(root);
+        document.body.appendChild(outside);
+
+        const { unmount } = mount({ counter } as never, { root });
+        expect(inside.querySelector("p")!.textContent).toBe("1");
+        expect(outside.querySelector("p")!.textContent).toBe("original");
+        unmount();
+      });
+
+      it("handles malformed data-ilha-props gracefully", () => {
+        const counter = ilha
+          .input(z.object({ count: z.number().default(0) }))
+          .state("count", ({ count }) => count)
+          .render(({ state }) => `<p>${state.count()}</p>`);
+
+        const el = document.createElement("div");
+        el.setAttribute("data-ilha", "counter");
+        el.setAttribute("data-ilha-props", "{invalid json}");
+        document.body.appendChild(el);
+
+        expect(() => mount({ counter } as never)).not.toThrow();
+      });
     });
   });
 });
 
 // ─────────────────────────────────────────────
-// ilha.mount — auto-discovery
+// ilha.mount() auto-discovery (top-level)
 // ─────────────────────────────────────────────
 
 describe("ilha.mount()", () => {
@@ -840,7 +1082,7 @@ describe("ilha.mount()", () => {
 
     const el = document.createElement("div");
     el.setAttribute("data-ilha", "counter");
-    el.setAttribute("data-props", JSON.stringify({ count: 7 }));
+    el.setAttribute("data-ilha-props", JSON.stringify({ count: 7 }));
     document.body.appendChild(el);
 
     const { unmount } = mount({ counter } as never);
@@ -859,7 +1101,7 @@ describe("ilha.mount()", () => {
     unmount();
   });
 
-  it("handles malformed data-props gracefully", () => {
+  it("handles malformed data-ilha-props gracefully", () => {
     const counter = ilha
       .input(z.object({ count: z.number().default(0) }))
       .state("count", ({ count }) => count)
@@ -867,13 +1109,13 @@ describe("ilha.mount()", () => {
 
     const el = document.createElement("div");
     el.setAttribute("data-ilha", "counter");
-    el.setAttribute("data-props", "{invalid json}");
+    el.setAttribute("data-ilha-props", "{invalid json}");
     document.body.appendChild(el);
 
     expect(() => mount({ counter } as never)).not.toThrow();
   });
 
-  it("unmount() tears down all discovered islands", () => {
+  it("unmount tears down all discovered islands", () => {
     const counter = ilha
       .input(z.object({ count: z.number().default(0) }))
       .state("count", ({ count }) => count)
@@ -884,7 +1126,7 @@ describe("ilha.mount()", () => {
 
     const el = document.createElement("div");
     el.setAttribute("data-ilha", "counter");
-    el.setAttribute("data-props", JSON.stringify({ count: 0 }));
+    el.setAttribute("data-ilha-props", JSON.stringify({ count: 0 }));
     document.body.appendChild(el);
 
     const { unmount } = mount({ counter } as never);
@@ -902,11 +1144,11 @@ describe("ilha.mount()", () => {
 
     const inside = document.createElement("div");
     inside.setAttribute("data-ilha", "counter");
-    inside.setAttribute("data-props", JSON.stringify({ count: 1 }));
+    inside.setAttribute("data-ilha-props", JSON.stringify({ count: 1 }));
 
     const outside = document.createElement("div");
     outside.setAttribute("data-ilha", "counter");
-    outside.setAttribute("data-props", JSON.stringify({ count: 2 }));
+    outside.setAttribute("data-ilha-props", JSON.stringify({ count: 2 }));
     outside.innerHTML = "<p>original</p>";
 
     const root = document.createElement("section");
@@ -932,11 +1174,11 @@ describe("ilha.mount()", () => {
 
     const elA = document.createElement("div");
     elA.setAttribute("data-ilha", "counter");
-    elA.setAttribute("data-props", JSON.stringify({ count: 3 }));
+    elA.setAttribute("data-ilha-props", JSON.stringify({ count: 3 }));
 
     const elB = document.createElement("div");
     elB.setAttribute("data-ilha", "greeting");
-    elB.setAttribute("data-props", JSON.stringify({ name: "Ada" }));
+    elB.setAttribute("data-ilha-props", JSON.stringify({ name: "Ada" }));
 
     document.body.appendChild(elA);
     document.body.appendChild(elB);
@@ -946,297 +1188,291 @@ describe("ilha.mount()", () => {
     expect(elB.innerHTML).toBe("<b>hello Ada</b>");
     unmount();
   });
+});
 
-  // ─────────────────────────────────────────────
-  // Slots
-  // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// Slots
+// ─────────────────────────────────────────────
 
-  describe("slots", () => {
-    beforeEach(() => {
-      document.body.innerHTML = "";
-    });
-
-    it("SSR: renders child island inline via children proxy", () => {
-      const badge = ilha
-        .state("label", "hello")
-        .render(({ state }) => `<span>${state.label()}</span>`);
-
-      const card = ilha
-        .slot("badge", badge as never)
-        .render(({ slots }) => `<div>${slots.badge}</div>`);
-
-      expect(card()).toBe("<div><span>hello</span></div>");
-    });
-
-    it("SSR: child renders with its own schema defaults", () => {
-      const counter = ilha
-        .input(z.object({ count: z.number().default(99) }))
-        .state("count", ({ count }) => count)
-        .render(({ state }) => `<p>${state.count()}</p>`);
-
-      const parent = ilha
-        .slot("counter", counter as never)
-        .render(({ slots }) => `<section>${slots.counter}</section>`);
-
-      expect(parent()).toBe("<section><p>99</p></section>");
-    });
-
-    it("SSR: slot renders with passed props", () => {
-      const counter = ilha
-        .input(z.object({ count: z.number().default(0) }))
-        .state("count", ({ count }) => count)
-        .render(({ state }) => `<p>${state.count()}</p>`);
-
-      const parent = ilha
-        .slot("counter", counter as never)
-        .render(({ slots }) => html`<div>${slots.counter({ count: 5 })}</div>`);
-
-      expect(parent()).toBe("<div><p>5</p></div>");
-    });
-
-    it("client: slot element is present in DOM after mount", () => {
-      const child = ilha.render(() => `<span>child</span>`);
-
-      const parent = ilha
-        .slot("child", child as never)
-        .render(({ slots }) => `<div>${slots.child}</div>`);
-
-      const el = makeEl();
-      const unmount = parent.mount(el);
-
-      expect(el.querySelector("[data-ilha-slot='child']")).not.toBeNull();
-      expect(el.querySelector("[data-ilha-slot='child']")!.innerHTML).toBe("<span>child</span>");
-
-      unmount();
-      cleanup(el);
-    });
-
-    it("client: child island is interactive independently", () => {
-      const child = ilha
-        .state("count", 0)
-        .on("[data-inc]@click", ({ state }) => {
-          state.count(state.count() + 1);
-        })
-        .render(({ state }) => `<p>${state.count()}</p><button data-inc>+</button>`);
-
-      const parent = ilha
-        .slot("child", child as never)
-        .render(({ slots }) => `<div class="parent">${slots.child}</div>`);
-
-      const el = makeEl();
-      const unmount = parent.mount(el);
-
-      el.querySelector<HTMLButtonElement>("[data-inc]")!.click();
-      expect(el.querySelector("p")!.textContent).toBe("1");
-
-      el.querySelector<HTMLButtonElement>("[data-inc]")!.click();
-      expect(el.querySelector("p")!.textContent).toBe("2");
-
-      unmount();
-      cleanup(el);
-    });
-
-    it("client: parent re-render does not destroy child slot", () => {
-      const child = ilha
-        .state("count", 0)
-        .on("[data-inc]@click", ({ state }) => {
-          state.count(state.count() + 1);
-        })
-        .render(({ state }) => `<p>${state.count()}</p><button data-inc>+</button>`);
-
-      let parentAccessor!: (v?: number) => number | void;
-
-      const parent = ilha
-        .state("tick", 0)
-        .slot("child", child as never)
-        .render(({ state, slots }) => {
-          parentAccessor = state.tick as typeof parentAccessor;
-          return `<div><span>${state.tick()}</span>${slots.child}</div>`;
-        });
-
-      const el = makeEl();
-      const unmount = parent.mount(el);
-
-      el.querySelector<HTMLButtonElement>("[data-inc]")!.click();
-      expect(el.querySelector("p")!.textContent).toBe("1");
-
-      parentAccessor(1);
-      expect(el.querySelector("span")!.textContent).toBe("1");
-      expect(el.querySelector("p")!.textContent).toBe("1");
-
-      el.querySelector<HTMLButtonElement>("[data-inc]")!.click();
-      expect(el.querySelector("p")!.textContent).toBe("2");
-
-      unmount();
-      cleanup(el);
-    });
-
-    it("client: multiple slots are independently preserved on parent re-render", () => {
-      const childA = ilha.state("val", "A").render(({ state }) => `<i>${state.val()}</i>`);
-
-      const childB = ilha.state("val", "B").render(({ state }) => `<b>${state.val()}</b>`);
-
-      let parentAccessor!: (v?: number) => number | void;
-
-      const parent = ilha
-        .state("tick", 0)
-        .slot("a", childA as never)
-        .slot("b", childB as never)
-        .render(({ state, slots }) => {
-          parentAccessor = state.tick as typeof parentAccessor;
-          return `<div>${state.tick()}${slots.a}${slots.b}</div>`;
-        });
-
-      const el = makeEl();
-      const unmount = parent.mount(el);
-
-      const slotA = el.querySelector("[data-ilha-slot='a']")!;
-      const slotB = el.querySelector("[data-ilha-slot='b']")!;
-
-      parentAccessor(1);
-
-      expect(el.querySelector("[data-ilha-slot='a']")).toBe(slotA);
-      expect(el.querySelector("[data-ilha-slot='b']")).toBe(slotB);
-
-      unmount();
-      cleanup(el);
-    });
-
-    it("client: parent unmount cascades to child slots", () => {
-      const childCalls: string[] = [];
-
-      const child = ilha
-        .state("x", 0)
-        .effect(({ state }) => {
-          childCalls.push(`run:${state.x()}`);
-          return () => childCalls.push(`cleanup:${state.x()}`);
-        })
-        .render(({ state }) => `<span>${state.x()}</span>`);
-
-      const parent = ilha
-        .slot("child", child as never)
-        .render(({ slots }) => `<div>${slots.child}</div>`);
-
-      const el = makeEl();
-      const unmount = parent.mount(el);
-
-      expect(childCalls).toContain("run:0");
-      unmount();
-      expect(childCalls.some((l) => l.startsWith("cleanup:"))).toBe(true);
-
-      cleanup(el);
-    });
-
-    it("client: unknown slot name in slots proxy renders empty string", () => {
-      const parent = ilha.render(
-        ({ slots }) => html`<div>${(slots as Record<string, SlotAccessor>)["nonexistent"]}</div>`,
-      );
-
-      const el = makeEl();
-      const unmount = parent.mount(el);
-      expect(el.innerHTML).toBe("<div></div>");
-      unmount();
-      cleanup(el);
-    });
-
-    it("client: slot receives props via slots.x(props)", () => {
-      const counter = ilha
-        .input(z.object({ count: z.number().default(0) }))
-        .state("count", ({ count }) => count)
-        .render(({ state }) => `<p>${state.count()}</p>`);
-
-      const parent = ilha
-        .slot("counter", counter as never)
-        .render(({ slots }) => html`<div>${slots.counter({ count: 7 })}</div>`);
-
-      const el = makeEl();
-      const unmount = parent.mount(el);
-      expect(el.querySelector("p")!.textContent).toBe("7");
-      unmount();
-      cleanup(el);
-    });
-
-    it("client: slot receives props via data-props attribute", () => {
-      const counter = ilha
-        .input(z.object({ count: z.number().default(0) }))
-        .state("count", ({ count }) => count)
-        .render(({ state }) => `<p>${state.count()}</p>`);
-
-      const parent = ilha
-        .slot("counter", counter as never)
-        .render(() => `<div><div data-ilha-slot="counter" data-props='{"count":3}'></div></div>`);
-
-      const el = makeEl();
-      const unmount = parent.mount(el);
-      expect(el.querySelector("p")!.textContent).toBe("3");
-      unmount();
-      cleanup(el);
-    });
+describe("slots", () => {
+  beforeEach(() => {
+    document.body.innerHTML = "";
   });
 
-  // ─────────────────────────────────────────────
-  // .derived()
-  // ─────────────────────────────────────────────
+  it("SSR renders child island inline via children proxy", () => {
+    const badge = ilha
+      .state("label", "hello")
+      .render(({ state }) => `<span>${state.label()}</span>`);
 
-  describe(".derived()", () => {
-    // ── SSR — async ──────────────────────────────────────────────────────────
+    const card = ilha
+      .slot("badge", badge as never)
+      .render(({ slots }) => `<div>${slots.badge}</div>`);
 
-    it("SSR: async derived is always loading: true during SSR", async () => {
+    expect(card()).toBe("<div><span>hello</span></div>");
+  });
+
+  it("SSR child renders with its own schema defaults", () => {
+    const counter = ilha
+      .input(z.object({ count: z.number().default(99) }))
+      .state("count", ({ count }) => count)
+      .render(({ state }) => `<p>${state.count()}</p>`);
+
+    const parent = ilha
+      .slot("counter", counter as never)
+      .render(({ slots }) => `<section>${slots.counter}</section>`);
+
+    expect(parent()).toBe("<section><p>99</p></section>");
+  });
+
+  it("SSR slot renders with passed props", () => {
+    const counter = ilha
+      .input(z.object({ count: z.number().default(0) }))
+      .state("count", ({ count }) => count)
+      .render(({ state }) => `<p>${state.count()}</p>`);
+
+    const parent = ilha
+      .slot("counter", counter as never)
+      .render(({ slots }) => html`<div>${slots.counter({ count: 5 })}</div>`);
+
+    expect(parent()).toBe("<div><p>5</p></div>");
+  });
+
+  it("client slot element is present in DOM after mount", () => {
+    const child = ilha.render(() => `<span>child</span>`);
+
+    const parent = ilha
+      .slot("child", child as never)
+      .render(({ slots }) => `<div>${slots.child}</div>`);
+
+    const el = makeEl();
+    const unmount = parent.mount(el);
+    expect(el.querySelector("[data-ilha-slot='child']")).not.toBeNull();
+    expect(el.querySelector("[data-ilha-slot='child']")!.innerHTML).toBe("<span>child</span>");
+    unmount();
+    cleanup(el);
+  });
+
+  it("client child island is interactive independently", () => {
+    const child = ilha
+      .state("count", 0)
+      .on("[data-inc]@click", ({ state }) => {
+        state.count(state.count() + 1);
+      })
+      .render(({ state }) => `<p>${state.count()}</p><button data-inc>+</button>`);
+
+    const parent = ilha
+      .slot("child", child as never)
+      .render(({ slots }) => `<div class="parent">${slots.child}</div>`);
+
+    const el = makeEl();
+    const unmount = parent.mount(el);
+
+    el.querySelector<HTMLButtonElement>("[data-inc]")!.click();
+    expect(el.querySelector("p")!.textContent).toBe("1");
+
+    el.querySelector<HTMLButtonElement>("[data-inc]")!.click();
+    expect(el.querySelector("p")!.textContent).toBe("2");
+
+    unmount();
+    cleanup(el);
+  });
+
+  it("client parent re-render does not destroy child slot", () => {
+    const child = ilha
+      .state("count", 0)
+      .on("[data-inc]@click", ({ state }) => {
+        state.count(state.count() + 1);
+      })
+      .render(({ state }) => `<p>${state.count()}</p><button data-inc>+</button>`);
+
+    let parentAccessor!: (v?: number) => number | void;
+
+    const parent = ilha
+      .state("tick", 0)
+      .slot("child", child as never)
+      .render(({ state, slots }) => {
+        parentAccessor = state.tick as typeof parentAccessor;
+        return `<div><span>${state.tick()}</span>${slots.child}</div>`;
+      });
+
+    const el = makeEl();
+    const unmount = parent.mount(el);
+
+    el.querySelector<HTMLButtonElement>("[data-inc]")!.click();
+    expect(el.querySelector("p")!.textContent).toBe("1");
+
+    parentAccessor(1);
+    expect(el.querySelector("span")!.textContent).toBe("1");
+    expect(el.querySelector("p")!.textContent).toBe("1");
+
+    el.querySelector<HTMLButtonElement>("[data-inc]")!.click();
+    expect(el.querySelector("p")!.textContent).toBe("2");
+
+    unmount();
+    cleanup(el);
+  });
+
+  it("client multiple slots are independently preserved on parent re-render", () => {
+    const childA = ilha.state("val", "A").render(({ state }) => `<i>${state.val()}</i>`);
+    const childB = ilha.state("val", "B").render(({ state }) => `<b>${state.val()}</b>`);
+
+    let parentAccessor!: (v?: number) => number | void;
+
+    const parent = ilha
+      .state("tick", 0)
+      .slot("a", childA as never)
+      .slot("b", childB as never)
+      .render(({ state, slots }) => {
+        parentAccessor = state.tick as typeof parentAccessor;
+        return `<div>${state.tick()}${slots.a}${slots.b}</div>`;
+      });
+
+    const el = makeEl();
+    const unmount = parent.mount(el);
+
+    const slotA = el.querySelector("[data-ilha-slot='a']")!;
+    const slotB = el.querySelector("[data-ilha-slot='b']")!;
+
+    parentAccessor(1);
+    expect(el.querySelector("[data-ilha-slot='a']")).toBe(slotA);
+    expect(el.querySelector("[data-ilha-slot='b']")).toBe(slotB);
+
+    unmount();
+    cleanup(el);
+  });
+
+  it("client parent unmount cascades to child slots", () => {
+    const childCalls: string[] = [];
+
+    const child = ilha
+      .state("x", 0)
+      .effect(({ state }) => {
+        childCalls.push(`run:${state.x()}`);
+        return () => childCalls.push(`cleanup:${state.x()}`);
+      })
+      .render(({ state }) => `<span>${state.x()}</span>`);
+
+    const parent = ilha
+      .slot("child", child as never)
+      .render(({ slots }) => `<div>${slots.child}</div>`);
+
+    const el = makeEl();
+    const unmount = parent.mount(el);
+    expect(childCalls).toContain("run:0");
+    unmount();
+    expect(childCalls.some((l) => l.startsWith("cleanup:"))).toBe(true);
+    cleanup(el);
+  });
+
+  it("client unknown slot name in slots proxy renders empty string", () => {
+    const parent = ilha.render(
+      ({ slots }) => html`<div>${(slots as Record<string, SlotAccessor>)["nonexistent"]}</div>`,
+    );
+
+    const el = makeEl();
+    const unmount = parent.mount(el);
+    expect(el.innerHTML).toBe("<div></div>");
+    unmount();
+    cleanup(el);
+  });
+
+  it("client slot receives props via slots.x(props)", () => {
+    const counter = ilha
+      .input(z.object({ count: z.number().default(0) }))
+      .state("count", ({ count }) => count)
+      .render(({ state }) => `<p>${state.count()}</p>`);
+
+    const parent = ilha
+      .slot("counter", counter as never)
+      .render(({ slots }) => html`<div>${slots.counter({ count: 7 })}</div>`);
+
+    const el = makeEl();
+    const unmount = parent.mount(el);
+    expect(el.querySelector("p")!.textContent).toBe("7");
+    unmount();
+    cleanup(el);
+  });
+
+  it("client slot receives props via data-props attribute", () => {
+    const counter = ilha
+      .input(z.object({ count: z.number().default(0) }))
+      .state("count", ({ count }) => count)
+      .render(({ state }) => `<p>${state.count()}</p>`);
+
+    const parent = ilha
+      .slot("counter", counter as never)
+      .render(() => `<div><div data-ilha-slot="counter" data-props='{"count":3}'></div></div>`);
+
+    const el = makeEl();
+    const unmount = parent.mount(el);
+    expect(el.querySelector("p")!.textContent).toBe("3");
+    unmount();
+    cleanup(el);
+  });
+});
+
+// ─────────────────────────────────────────────
+// .derived
+// ─────────────────────────────────────────────
+
+describe(".derived", () => {
+  describe("SSR async", () => {
+    it("SSR async derived is always loading:true during SSR", async () => {
       const island = ilha
         .derived("data", async () => "resolved")
         .render(({ derived }) =>
-          derived.data.loading ? "<p>loading</p>" : `<p>${derived.data.value}</p>`,
+          derived.data.loading ? `<p>loading</p>` : `<p>${derived.data.value}</p>`,
         );
 
       expect(await island()).toBe("<p>resolved</p>");
     });
 
-    it("SSR: async derived.value and derived.error are undefined during SSR", async () => {
+    it("SSR async derived.value and derived.error are undefined during SSR", async () => {
       const island = ilha
         .derived("data", async () => 42)
         .render(({ derived }) => {
           const d = derived.data;
-          return `${d.loading}:${d.value}:${d.error}`;
+          return `${d.loading}${d.value}${d.error}`;
         });
 
-      expect(await island()).toBe("false:42:undefined");
+      expect(await island()).toBe("false42undefined");
     });
 
-    it("SSR: multiple async derived keys all start as loading", async () => {
+    it("SSR multiple async derived keys all start as loading", async () => {
       const island = ilha
         .derived("a", async () => 1)
         .derived("b", async () => 2)
-        .render(({ derived }) => `${derived.a.loading}:${derived.b.loading}`);
+        .render(({ derived }) => `${derived.a.loading}${derived.b.loading}`);
 
-      expect(await island()).toBe("false:false");
+      expect(await island()).toBe("falsefalse");
     });
+  });
 
-    // ── SSR — sync ───────────────────────────────────────────────────────────
-
-    it("SSR: sync derived resolves immediately during SSR", () => {
+  describe("SSR sync", () => {
+    it("SSR sync derived resolves immediately during SSR", () => {
       const island = ilha
         .state("count", 5)
         .derived("doubled", ({ state }) => state.count() * 2)
         .render(({ derived }) =>
-          derived.doubled.loading ? "<p>loading</p>" : `<p>${derived.doubled.value}</p>`,
+          derived.doubled.loading ? `<p>loading</p>` : `<p>${derived.doubled.value}</p>`,
         );
 
       expect(island()).toBe("<p>10</p>");
     });
 
-    it("SSR: sync derived has loading: false and correct value", () => {
+    it("SSR sync derived has loading:false and correct value", () => {
       const island = ilha
         .state("name", "ada")
         .derived("upper", ({ state }) => state.name().toUpperCase())
         .render(({ derived }) => {
           const d = derived.upper;
-          return `${d.loading}:${d.value}:${d.error}`;
+          return `${d.loading}${d.value}${d.error}`;
         });
 
-      expect(island()).toBe("false:ADA:undefined");
+      expect(island()).toBe("falseADAundefined");
     });
 
-    it("SSR: sync derived receives input", () => {
+    it("SSR sync derived receives input", () => {
       const island = ilha
         .input(z.object({ multiplier: z.number().default(3) }))
         .derived("result", ({ input }) => input.multiplier * 10)
@@ -1245,20 +1481,20 @@ describe("ilha.mount()", () => {
       expect(island({ multiplier: 4 })).toBe("<p>40</p>");
     });
 
-    it("SSR: mixed sync and async derived — sync resolves, async is loading", async () => {
+    it("SSR mixed sync and async derived: sync resolves, async is loading", async () => {
       const island = ilha
         .state("count", 3)
         .derived("sync", ({ state }) => state.count() * 2)
         .derived("async", async ({ state }) => state.count() * 3)
         .render(
           ({ derived }) =>
-            `${derived.sync.loading}:${derived.sync.value}:${derived.async.loading}:${derived.async.value}`,
+            `${derived.sync.loading}${derived.sync.value}${derived.async.loading}${derived.async.value}`,
         );
 
-      expect(await island()).toBe("false:6:false:9");
+      expect(await island()).toBe("false6false9");
     });
 
-    it("SSR: island() returns a Promise when async derived is present", () => {
+    it("SSR island returns a Promise when async derived is present", () => {
       const island = ilha
         .derived("data", async () => 42)
         .render(({ derived }) => `<p>${derived.data.value}</p>`);
@@ -1267,7 +1503,7 @@ describe("ilha.mount()", () => {
       expect(result).toBeInstanceOf(Promise);
     });
 
-    it("SSR: island() returns a string when all derived are sync", () => {
+    it("SSR island returns a string when all derived are sync", () => {
       const island = ilha
         .state("count", 2)
         .derived("doubled", ({ state }) => state.count() * 2)
@@ -1278,33 +1514,33 @@ describe("ilha.mount()", () => {
       expect(result).toBe("<p>4</p>");
     });
 
-    it("SSR: toString() keeps async derived in loading state", () => {
+    it("SSR toString keeps async derived in loading state", () => {
       const island = ilha
         .derived("data", async () => 42)
         .render(({ derived }) =>
-          derived.data.loading ? "<p>loading</p>" : `<p>${derived.data.value}</p>`,
+          derived.data.loading ? `<p>loading</p>` : `<p>${derived.data.value}</p>`,
         );
 
       expect(island.toString()).toBe("<p>loading</p>");
     });
 
-    it("SSR: template interpolation uses toString() fallback for async derived", () => {
+    it("SSR template interpolation uses toString fallback for async derived", () => {
       const island = ilha
         .derived("data", async () => "resolved")
         .render(({ derived }) =>
-          derived.data.loading ? "<p>loading</p>" : `<p>${derived.data.value}</p>`,
+          derived.data.loading ? `<p>loading</p>` : `<p>${derived.data.value}</p>`,
         );
 
       expect(`<div>${island}</div>`).toBe("<div><p>loading</p></div>");
     });
 
-    it("SSR: awaited async derived rejection populates error envelope", async () => {
+    it("SSR awaited async derived rejection populates error envelope", async () => {
       const island = ilha
         .derived("data", async () => {
           throw new Error("boom");
         })
         .render(({ derived }) => {
-          if (derived.data.loading) return "<p>loading</p>";
+          if (derived.data.loading) return `<p>loading</p>`;
           if (derived.data.error) return `<p>error:${derived.data.error.message}</p>`;
           return `<p>${derived.data.value}</p>`;
         });
@@ -1312,57 +1548,54 @@ describe("ilha.mount()", () => {
       expect(await island()).toBe("<p>error:boom</p>");
     });
 
-    it("SSR: awaited async non-Error throw is wrapped in Error", async () => {
+    it("SSR awaited async non-Error throw is wrapped in Error", async () => {
       const island = ilha
         .derived("data", async () => {
           throw "bad";
         })
         .render(({ derived }) => {
-          if (derived.data.loading) return "<p>loading</p>";
+          if (derived.data.loading) return `<p>loading</p>`;
           return `<p>${derived.data.error instanceof Error}</p>`;
         });
 
       expect(await island()).toBe("<p>true</p>");
     });
 
-    it("SSR: toString() resolves sync derived but keeps async derived loading", () => {
+    it("SSR toString resolves sync derived but keeps async derived loading", () => {
       const island = ilha
         .state("count", 3)
         .derived("sync", ({ state }) => state.count() * 2)
         .derived("async", async ({ state }) => state.count() * 3)
         .render(
           ({ derived }) =>
-            `${derived.sync.loading}:${derived.sync.value}:${derived.async.loading}:${derived.async.value}`,
+            `${derived.sync.loading}${derived.sync.value}${derived.async.loading}${derived.async.value}`,
         );
 
-      expect(island.toString()).toBe("false:6:true:undefined");
+      expect(island.toString()).toBe("false6trueundefined");
     });
+  });
 
-    // ── Client — basic resolve ────────────────────────────────────────────────
-
-    it("client: async derived resolves and triggers re-render", async () => {
+  describe("Client basic resolve", () => {
+    it("client async derived resolves and triggers re-render", async () => {
       const island = ilha
         .derived("msg", async () => {
           await new Promise((r) => setTimeout(r, 5));
           return "hello";
         })
         .render(({ derived }) =>
-          derived.msg.loading ? "<p>loading</p>" : `<p>${derived.msg.value}</p>`,
+          derived.msg.loading ? `<p>loading</p>` : `<p>${derived.msg.value}</p>`,
         );
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       expect(el.querySelector("p")!.textContent).toBe("loading");
-
       await new Promise((r) => setTimeout(r, 15));
       expect(el.querySelector("p")!.textContent).toBe("hello");
-
       unmount();
       cleanup(el);
     });
 
-    it("client: sync derived is immediately available on mount", () => {
+    it("client sync derived is immediately available on mount", () => {
       const island = ilha
         .state("count", 7)
         .derived("doubled", ({ state }) => state.count() * 2)
@@ -1370,75 +1603,67 @@ describe("ilha.mount()", () => {
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       expect(el.querySelector("p")!.textContent).toBe("14");
-
       unmount();
       cleanup(el);
     });
 
-    it("client: sync derived never has loading: true", () => {
+    it("client sync derived never has loading:true", () => {
       const island = ilha
         .state("x", 3)
         .derived("sq", ({ state }) => state.x() ** 2)
-        .render(({ derived }) => `<p>${derived.sq.loading}:${derived.sq.value}</p>`);
+        .render(({ derived }) => `<p>${derived.sq.loading}${derived.sq.value}</p>`);
 
       const el = makeEl();
       const unmount = island.mount(el);
-
-      expect(el.querySelector("p")!.textContent).toBe("false:9");
-
+      expect(el.querySelector("p")!.textContent).toBe("false9");
       unmount();
       cleanup(el);
     });
 
-    it("client: async derived captures error and sets error envelope", async () => {
+    it("client async derived captures error and sets error envelope", async () => {
       const island = ilha
         .derived("data", async () => {
           await new Promise((r) => setTimeout(r, 5));
           throw new Error("boom");
         })
         .render(({ derived }) => {
-          if (derived.data.loading) return "<p>loading</p>";
+          if (derived.data.loading) return `<p>loading</p>`;
           if (derived.data.error) return `<p>error:${derived.data.error.message}</p>`;
           return `<p>${derived.data.value}</p>`;
         });
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       await new Promise((r) => setTimeout(r, 15));
       expect(el.querySelector("p")!.textContent).toBe("error:boom");
-
       unmount();
       cleanup(el);
     });
 
-    it("client: non-Error throws are wrapped in Error", async () => {
+    it("client non-Error throws are wrapped in Error", async () => {
       const island = ilha
         .derived("data", async () => {
           await new Promise((r) => setTimeout(r, 5));
           throw "string error";
         })
         .render(({ derived }) => {
-          if (derived.data.loading) return "<p>loading</p>";
+          if (derived.data.loading) return `<p>loading</p>`;
           if (derived.data.error) return `<p>${derived.data.error instanceof Error}</p>`;
-          return "<p>ok</p>";
+          return `<p>ok</p>`;
         });
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       await new Promise((r) => setTimeout(r, 15));
       expect(el.querySelector("p")!.textContent).toBe("true");
-
       unmount();
       cleanup(el);
     });
+  });
 
-    // ── Client — reactivity ───────────────────────────────────────────────────
-
-    it("client: sync derived re-runs reactively when state changes", () => {
+  describe("Client reactivity", () => {
+    it("client sync derived re-runs reactively when state changes", () => {
       let accessor!: (v?: number) => number | void;
 
       const island = ilha
@@ -1451,20 +1676,16 @@ describe("ilha.mount()", () => {
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       expect(el.querySelector("p")!.textContent).toBe("4");
-
       accessor(10);
       expect(el.querySelector("p")!.textContent).toBe("20");
-
       accessor(0);
       expect(el.querySelector("p")!.textContent).toBe("0");
-
       unmount();
       cleanup(el);
     });
 
-    it("client: async derived re-runs when tracked state changes", async () => {
+    it("client async derived re-runs when tracked state changes", async () => {
       let accessor!: (v?: string) => string | void;
       const calls: string[] = [];
 
@@ -1478,26 +1699,22 @@ describe("ilha.mount()", () => {
         })
         .render(({ state, derived }) => {
           accessor = state.query as typeof accessor;
-          return derived.result.loading ? "<p>…</p>" : `<p>${derived.result.value}</p>`;
+          return derived.result.loading ? `<p></p>` : `<p>${derived.result.value}</p>`;
         });
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       await new Promise((r) => setTimeout(r, 15));
       expect(el.querySelector("p")!.textContent).toBe("FOO");
-
       accessor("bar");
       await new Promise((r) => setTimeout(r, 15));
       expect(el.querySelector("p")!.textContent).toBe("BAR");
-
       expect(calls).toEqual(["foo", "bar"]);
-
       unmount();
       cleanup(el);
     });
 
-    it("client: sync and async derived coexist independently", async () => {
+    it("client sync and async derived coexist independently", async () => {
       let accessor!: (v?: number) => number | void;
 
       const island = ilha
@@ -1510,30 +1727,23 @@ describe("ilha.mount()", () => {
         })
         .render(({ state, derived }) => {
           accessor = state.n as typeof accessor;
-          return `<p>${derived.sync.value}:${derived.async.loading ? "…" : derived.async.value}</p>`;
+          return `<p>${derived.sync.value}${derived.async.loading ? "" : derived.async.value}</p>`;
         });
 
       const el = makeEl();
       const unmount = island.mount(el);
-
-      // sync is immediately 6, async still loading
-      expect(el.querySelector("p")!.textContent).toBe("6:…");
-
+      expect(el.querySelector("p")!.textContent).toBe("6");
       await new Promise((r) => setTimeout(r, 15));
-      expect(el.querySelector("p")!.textContent).toBe("6:30");
-
+      expect(el.querySelector("p")!.textContent).toBe("630");
       accessor(5);
-      // sync updates immediately
-      expect(el.querySelector("p")!.textContent).toBe("10:…");
-
+      expect(el.querySelector("p")!.textContent).toBe("10");
       await new Promise((r) => setTimeout(r, 15));
-      expect(el.querySelector("p")!.textContent).toBe("10:50");
-
+      expect(el.querySelector("p")!.textContent).toBe("1050");
       unmount();
       cleanup(el);
     });
 
-    it("client: async derived.value is preserved while re-fetching (stale-while-revalidate)", async () => {
+    it("client async derived.value is preserved while re-fetching (stale-while-revalidate)", async () => {
       let accessor!: (v?: string) => string | void;
 
       const island = ilha
@@ -1552,24 +1762,19 @@ describe("ilha.mount()", () => {
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       expect(el.querySelector("p")!.textContent).toBe("loading:none");
-
       await new Promise((r) => setTimeout(r, 15));
       expect(el.querySelector("p")!.textContent).toBe("done:FOO");
-
       accessor("bar");
       await Promise.resolve();
       expect(el.querySelector("p")!.textContent).toBe("loading:FOO");
-
       await new Promise((r) => setTimeout(r, 15));
       expect(el.querySelector("p")!.textContent).toBe("done:BAR");
-
       unmount();
       cleanup(el);
     });
 
-    it("client: stale async derived result is ignored after state changes", async () => {
+    it("client stale async derived result is ignored after state changes", async () => {
       let accessor!: (v?: number) => number | void;
 
       const island = ilha
@@ -1582,28 +1787,24 @@ describe("ilha.mount()", () => {
         })
         .render(({ state, derived }) => {
           accessor = state.n as typeof accessor;
-          return derived.data.loading ? "<p>loading</p>" : `<p>${derived.data.value}</p>`;
+          return derived.data.loading ? `<p>loading</p>` : `<p>${derived.data.value}</p>`;
         });
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       await new Promise((r) => setTimeout(r, 5));
       accessor(2);
-
       await new Promise((r) => setTimeout(r, 20));
       expect(el.querySelector("p")!.textContent).toBe("2");
-
       await new Promise((r) => setTimeout(r, 30));
       expect(el.querySelector("p")!.textContent).toBe("2");
-
       unmount();
       cleanup(el);
     });
+  });
 
-    // ── Client — AbortSignal ──────────────────────────────────────────────────
-
-    it("client: AbortSignal is aborted when state changes before fetch resolves", async () => {
+  describe("Client AbortSignal", () => {
+    it("client AbortSignal is aborted when state changes before fetch resolves", async () => {
       let accessor!: (v?: number) => number | void;
       const aborted: boolean[] = [];
 
@@ -1617,27 +1818,23 @@ describe("ilha.mount()", () => {
         })
         .render(({ state, derived }) => {
           accessor = state.n as typeof accessor;
-          return derived.data.loading ? "<p>loading</p>" : `<p>${derived.data.value}</p>`;
+          return derived.data.loading ? `<p>loading</p>` : `<p>${derived.data.value}</p>`;
         });
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       await new Promise((r) => setTimeout(r, 5));
       accessor(1);
-
       await new Promise((r) => setTimeout(r, 30));
-
       expect(aborted[0]).toBe(true);
       expect(aborted[aborted.length - 1]).toBe(false);
-
       unmount();
       cleanup(el);
     });
+  });
 
-    // ── Client — unmount ──────────────────────────────────────────────────────
-
-    it("client: unmount stops derived effects and aborts pending fetch", async () => {
+  describe("Client unmount", () => {
+    it("client unmount stops derived effects and aborts pending fetch", async () => {
       let abortedAfterUnmount = false;
 
       const island = ilha
@@ -1646,21 +1843,18 @@ describe("ilha.mount()", () => {
           abortedAfterUnmount = signal.aborted;
           return "done";
         })
-        .render(({ derived }) => (derived.data.loading ? "<p>loading</p>" : "<p>done</p>"));
+        .render(({ derived }) => (derived.data.loading ? `<p>loading</p>` : `<p>done</p>`));
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       await new Promise((r) => setTimeout(r, 5));
       unmount();
-
       await new Promise((r) => setTimeout(r, 40));
       expect(abortedAfterUnmount).toBe(true);
-
       cleanup(el);
     });
 
-    it("client: unmount stops sync derived reactive effect", () => {
+    it("client unmount stops sync derived reactive effect", () => {
       let accessor!: (v?: number) => number | void;
 
       const island = ilha
@@ -1673,20 +1867,16 @@ describe("ilha.mount()", () => {
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       expect(el.querySelector("p")!.textContent).toBe("2");
       unmount();
-
-      // after unmount, state changes should not update the DOM
       accessor(99);
       expect(el.querySelector("p")!.textContent).toBe("2");
-
       cleanup(el);
     });
+  });
 
-    // ── Client — multiple instances & input access ────────────────────────────
-
-    it("client: two mounted instances have independent derived state", async () => {
+  describe("Client multiple instances / input access", () => {
+    it("client two mounted instances have independent derived state", async () => {
       const island = ilha
         .input(z.object({ prefix: z.string().default("x") }))
         .derived("data", async ({ input }) => {
@@ -1694,44 +1884,23 @@ describe("ilha.mount()", () => {
           return `${input.prefix}-result`;
         })
         .render(({ derived }) =>
-          derived.data.loading ? "<p>loading</p>" : `<p>${derived.data.value}</p>`,
+          derived.data.loading ? `<p>loading</p>` : `<p>${derived.data.value}</p>`,
         );
 
       const elA = makeEl();
       const elB = makeEl();
       const unmountA = island.mount(elA, { prefix: "a" });
       const unmountB = island.mount(elB, { prefix: "b" });
-
       await new Promise((r) => setTimeout(r, 15));
-
       expect(elA.querySelector("p")!.textContent).toBe("a-result");
       expect(elB.querySelector("p")!.textContent).toBe("b-result");
-
       unmountA();
       unmountB();
       cleanup(elA);
       cleanup(elB);
     });
 
-    it("client: sync derived two instances are independent", () => {
-      let accA!: (v?: number) => number | void;
-      // @ts-expect-error
-      let accB!: (v?: number) => number | void;
-
-      const island = ilha
-        .state("n", 1)
-        .derived("sq", ({ state }) => state.n() ** 2)
-        .render(({ state, derived }) => {
-          accA = accB = state.n as typeof accA;
-          return `<p>${derived.sq.value}</p>`;
-        });
-
-      const elA = makeEl();
-      const elB = makeEl();
-      const unmountA = island.mount(elA, {});
-      const unmountB = island.mount(elB, {});
-
-      // capture independent accessors per instance
+    it("client sync derived two instances are independent", () => {
       let capA!: (v?: number) => number | void;
       let capB!: (v?: number) => number | void;
 
@@ -1750,11 +1919,6 @@ describe("ilha.mount()", () => {
           capB = state.n as typeof capB;
           return `<p>${derived.sq.value}</p>`;
         });
-
-      unmountA();
-      unmountB();
-      cleanup(elA);
-      cleanup(elB);
 
       const elC = makeEl();
       const elD = makeEl();
@@ -1775,7 +1939,7 @@ describe("ilha.mount()", () => {
       cleanup(elD);
     });
 
-    it("client: async derived fn receives input", async () => {
+    it("client async derived fn receives input", async () => {
       const island = ilha
         .input(z.object({ multiplier: z.number().default(3) }))
         .derived("result", async ({ input }) => {
@@ -1783,20 +1947,18 @@ describe("ilha.mount()", () => {
           return input.multiplier * 10;
         })
         .render(({ derived }) =>
-          derived.result.loading ? "<p>…</p>" : `<p>${derived.result.value}</p>`,
+          derived.result.loading ? `<p></p>` : `<p>${derived.result.value}</p>`,
         );
 
       const el = makeEl();
       const unmount = island.mount(el, { multiplier: 4 });
-
       await new Promise((r) => setTimeout(r, 15));
       expect(el.querySelector("p")!.textContent).toBe("40");
-
       unmount();
       cleanup(el);
     });
 
-    it("client: sync derived fn receives input", () => {
+    it("client sync derived fn receives input", () => {
       const island = ilha
         .input(z.object({ multiplier: z.number().default(3) }))
         .derived("result", ({ input }) => input.multiplier * 10)
@@ -1804,133 +1966,112 @@ describe("ilha.mount()", () => {
 
       const el = makeEl();
       const unmount = island.mount(el, { multiplier: 4 });
-
       expect(el.querySelector("p")!.textContent).toBe("40");
-
       unmount();
       cleanup(el);
     });
   });
+});
 
-  // ─────────────────────────────────────────────
-  // .bind()
-  // ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// .bind
+// ─────────────────────────────────────────────
 
-  describe(".bind()", () => {
-    // ── SSR ──────────────────────────────────────────────────────────────────
-
-    it("SSR: .bind() is a no-op — island renders normally", () => {
+describe(".bind", () => {
+  describe("SSR", () => {
+    it("SSR .bind is a no-op — island renders normally", () => {
       const island = ilha
         .state("email", "default@example.com")
         .bind("[data-email]", "email")
-        .render(({ state }) => `<input data-email value="${state.email()}" />`);
+        .render(({ state }) => `<input data-email value="${state.email()}">`);
 
-      expect(island()).toBe(`<input data-email value="default@example.com" />`);
+      expect(island()).toBe(`<input data-email value="default@example.com">`);
     });
+  });
 
-    // ── DOM → state ───────────────────────────────────────────────────────────
-
-    it("client: text input change updates state (DOM → state)", () => {
+  describe("DOM → state", () => {
+    it("client text input change updates state", () => {
       const island = ilha
         .state("name", "ada")
         .bind("[data-name]", "name")
-        .render(({ state }) => `<input data-name value="${state.name()}" /><p>${state.name()}</p>`);
+        .render(({ state }) => `<input data-name value="${state.name()}"><p>${state.name()}</p>`);
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       el.querySelector<HTMLInputElement>("[data-name]")!.value = "grace";
       el.querySelector<HTMLInputElement>("[data-name]")!.dispatchEvent(new Event("input"));
-
       expect(el.querySelector("p")!.textContent).toBe("grace");
-
       unmount();
       cleanup(el);
     });
 
-    it("client: checkbox change updates boolean state (DOM → state)", () => {
+    it("client checkbox change updates boolean state", () => {
       const island = ilha
         .state("checked", false)
         .bind("[data-cb]", "checked")
         .render(
           ({ state }) =>
-            `<input type="checkbox" data-cb ${state.checked() ? "checked" : ""} /><p>${state.checked()}</p>`,
+            `<input type="checkbox" data-cb ${state.checked() ? "checked" : ""}><p>${state.checked()}</p>`,
         );
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       el.querySelector<HTMLInputElement>("[data-cb]")!.checked = true;
       el.querySelector<HTMLInputElement>("[data-cb]")!.dispatchEvent(new Event("change"));
-
       expect(el.querySelector("p")!.textContent).toBe("true");
-
       unmount();
       cleanup(el);
     });
 
-    it("client: select change updates state (DOM → state)", () => {
+    it("client select change updates state", () => {
       const island = ilha
         .state("size", "m")
         .bind("[data-size]", "size")
         .render(
           ({ state }) =>
-            `<select data-size>
-              <option value="s">S</option>
-              <option value="m">M</option>
-              <option value="l">L</option>
-            </select>
-            <p>${state.size()}</p>`,
+            `<select data-size><option value="s">S</option><option value="m">M</option><option value="l">L</option></select><p>${state.size()}</p>`,
         );
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       el.querySelector<HTMLSelectElement>("[data-size]")!.value = "l";
       el.querySelector<HTMLSelectElement>("[data-size]")!.dispatchEvent(new Event("change"));
-
       expect(el.querySelector("p")!.textContent).toBe("l");
-
       unmount();
       cleanup(el);
     });
 
-    it("client: number input updates numeric state (DOM → state)", () => {
+    it("client number input updates numeric state", () => {
       const island = ilha
         .state("count", 0)
         .bind("[data-num]", "count")
-        .render(({ state }) => `<input type="number" data-num /><p>${state.count()}</p>`);
+        .render(({ state }) => `<input type="number" data-num><p>${state.count()}</p>`);
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       el.querySelector<HTMLInputElement>("[data-num]")!.value = "42";
       el.querySelector<HTMLInputElement>("[data-num]")!.dispatchEvent(new Event("input"));
-
       expect(el.querySelector("p")!.textContent).toBe("42");
-
       unmount();
       cleanup(el);
     });
+  });
 
-    // ── state → DOM ───────────────────────────────────────────────────────────
-
-    it("client: initial state is synced to input value on mount (state → DOM)", () => {
+  describe("state → DOM", () => {
+    it("client initial state is synced to input value on mount", () => {
       const island = ilha
         .state("email", "hello@example.com")
         .bind("[data-email]", "email")
-        .render(({ state }) => `<input data-email value="${state.email()}" />`);
+        .render(({ state }) => `<input data-email value="${state.email()}">`);
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       expect(el.querySelector<HTMLInputElement>("[data-email]")!.value).toBe("hello@example.com");
-
       unmount();
       cleanup(el);
     });
 
-    it("client: programmatic state change updates input value (state → DOM)", () => {
+    it("client programmatic state change updates input value", () => {
       let accessor!: (v?: string) => string | void;
 
       const island = ilha
@@ -1938,22 +2079,18 @@ describe("ilha.mount()", () => {
         .bind("[data-email]", "email")
         .render(({ state }) => {
           accessor = state.email as typeof accessor;
-          return `<input data-email value="${state.email()}" />`;
+          return `<input data-email value="${state.email()}">`;
         });
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       accessor("new@example.com");
-
-      // re-query after re-render triggered by state change
       expect(el.querySelector<HTMLInputElement>("[data-email]")!.value).toBe("new@example.com");
-
       unmount();
       cleanup(el);
     });
 
-    it("client: programmatic state change updates checkbox checked (state → DOM)", () => {
+    it("client programmatic state change updates checkbox checked", () => {
       let accessor!: (v?: boolean) => boolean | void;
 
       const island = ilha
@@ -1961,137 +2098,111 @@ describe("ilha.mount()", () => {
         .bind("[data-cb]", "active")
         .render(({ state }) => {
           accessor = state.active as typeof accessor;
-          return `<input type="checkbox" data-cb ${state.active() ? "checked" : ""} />`;
+          return `<input type="checkbox" data-cb ${state.active() ? "checked" : ""}>`;
         });
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       expect(el.querySelector<HTMLInputElement>("[data-cb]")!.checked).toBe(false);
-
       accessor(true);
       expect(el.querySelector<HTMLInputElement>("[data-cb]")!.checked).toBe(true);
-
       accessor(false);
       expect(el.querySelector<HTMLInputElement>("[data-cb]")!.checked).toBe(false);
-
       unmount();
       cleanup(el);
     });
+  });
 
-    // ── Two-way ───────────────────────────────────────────────────────────────
-
-    it("client: two-way — DOM change reflects in render output", () => {
+  describe("Two-way", () => {
+    it("client two-way DOM change reflects in render output", () => {
       const island = ilha
         .state("query", "")
         .bind("[data-q]", "query")
-        .render(({ state }) => `<input data-q /><p>${state.query()}</p>`);
+        .render(({ state }) => `<input data-q><p>${state.query()}</p>`);
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       el.querySelector<HTMLInputElement>("[data-q]")!.value = "svelte";
       el.querySelector<HTMLInputElement>("[data-q]")!.dispatchEvent(new Event("input"));
       expect(el.querySelector("p")!.textContent).toBe("svelte");
-
-      // re-query — el.innerHTML was replaced by re-render, old reference is stale
       el.querySelector<HTMLInputElement>("[data-q]")!.value = "ilha";
       el.querySelector<HTMLInputElement>("[data-q]")!.dispatchEvent(new Event("input"));
       expect(el.querySelector("p")!.textContent).toBe("ilha");
-
       unmount();
       cleanup(el);
     });
+  });
 
-    // ── transform ─────────────────────────────────────────────────────────────
-
-    it("client: transform coerces DOM string to number", () => {
+  describe("transform", () => {
+    it("client transform coerces DOM string to number", () => {
       const island = ilha
         .state("age", 0)
         .bind("[data-age]", "age")
-        .render(({ state }) => `<input type="text" data-age /><p>${state.age()}</p>`);
+        .render(({ state }) => `<input type="text" data-age><p>${state.age()}</p>`);
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       el.querySelector<HTMLInputElement>("[data-age]")!.value = "25";
       el.querySelector<HTMLInputElement>("[data-age]")!.dispatchEvent(new Event("input"));
       expect(el.querySelector("p")!.textContent).toBe("25");
-
-      // re-query after re-render
       el.querySelector<HTMLInputElement>("[data-age]")!.value = "99";
       el.querySelector<HTMLInputElement>("[data-age]")!.dispatchEvent(new Event("input"));
       expect(el.querySelector("p")!.textContent).toBe("99");
-
       unmount();
       cleanup(el);
     });
+  });
 
-    // ── Cleanup ───────────────────────────────────────────────────────────────
-
-    it("client: unmount removes bind listeners — DOM changes no longer update state", () => {
+  describe("Cleanup", () => {
+    it("client unmount removes bind listeners — DOM changes no longer update state", () => {
       const island = ilha
         .state("val", "initial")
         .bind("[data-val]", "val")
-        .render(({ state }) => `<input data-val value="${state.val()}" /><p>${state.val()}</p>`);
+        .render(({ state }) => `<input data-val value="${state.val()}"><p>${state.val()}</p>`);
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       el.querySelector<HTMLInputElement>("[data-val]")!.value = "changed";
       el.querySelector<HTMLInputElement>("[data-val]")!.dispatchEvent(new Event("input"));
       expect(el.querySelector("p")!.textContent).toBe("changed");
-
       unmount();
-
-      // after unmount, DOM events must not propagate to state
-      // the input still exists in the DOM (we haven't called cleanup yet)
       el.querySelector<HTMLInputElement>("[data-val]")!.value = "after-unmount";
       el.querySelector<HTMLInputElement>("[data-val]")!.dispatchEvent(new Event("input"));
-      // innerHTML is frozen after unmount — <p> still shows "changed"
       expect(el.querySelector("p")!.textContent).toBe("changed");
-
       cleanup(el);
     });
+  });
 
-    // ── Re-render survival ────────────────────────────────────────────────────
-
-    it("client: bind survives parent re-render triggered by other state", () => {
+  describe("Re-render survival", () => {
+    it("client bind survives parent re-render triggered by other state", () => {
       let tickAccessor!: (v?: number) => number | void;
 
       const island = ilha
         .state("tick", 0)
         .state("email", "a@b.com")
         .bind("[data-email]", "email")
-        .on("[data-inc]@click", ({ state }) => state.tick(state.tick() + 1))
+        .on("[data-inc]@click", ({ state }) => {
+          state.tick(state.tick() + 1);
+        })
         .render(({ state }) => {
           tickAccessor = state.tick as typeof tickAccessor;
-          return `<p>${state.tick()}</p>
-                  <input data-email value="${state.email()}" />
-                  <button data-inc>+</button>`;
+          return `<p>${state.tick()}</p><input data-email value="${state.email()}"><button data-inc></button>`;
         });
 
       const el = makeEl();
       const unmount = island.mount(el);
-
-      // trigger re-render via unrelated state
       tickAccessor(1);
       expect(el.querySelector("p")!.textContent).toBe("1");
-
-      // bind must still work on freshly rendered elements
       el.querySelector<HTMLInputElement>("[data-email]")!.value = "new@example.com";
       el.querySelector<HTMLInputElement>("[data-email]")!.dispatchEvent(new Event("input"));
-
-      // re-query after re-render triggered by email state change
       expect(el.querySelector<HTMLInputElement>("[data-email]")!.value).toBe("new@example.com");
-
       unmount();
       cleanup(el);
     });
+  });
 
-    // ── Multiple binds ────────────────────────────────────────────────────────
-
-    it("client: multiple .bind() calls work independently", () => {
+  describe("Multiple binds", () => {
+    it("client multiple .bind calls work independently", () => {
       const island = ilha
         .state("first", "")
         .state("last", "")
@@ -2099,516 +2210,494 @@ describe("ilha.mount()", () => {
         .bind("[data-last]", "last")
         .render(
           ({ state }) =>
-            `<input data-first />
-             <input data-last />
-             <p>${state.first()} ${state.last()}</p>`,
+            `<input data-first><input data-last><p>${state.first()} ${state.last()}</p>`,
         );
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       el.querySelector<HTMLInputElement>("[data-first]")!.value = "Ada";
       el.querySelector<HTMLInputElement>("[data-first]")!.dispatchEvent(new Event("input"));
-
-      // re-query after re-render from first dispatch
       el.querySelector<HTMLInputElement>("[data-last]")!.value = "Lovelace";
       el.querySelector<HTMLInputElement>("[data-last]")!.dispatchEvent(new Event("input"));
-
       expect(el.querySelector("p")!.textContent).toBe("Ada Lovelace");
-
       unmount();
       cleanup(el);
     });
+  });
 
-    // ── Radio groups ──────────────────────────────────────────────────────────
-
-    it("client: radio group change updates string state", () => {
+  describe("Radio groups", () => {
+    it("client radio group change updates string state", () => {
       const island = ilha
         .state("plan", "pro")
-        .bind("[name=plan]", "plan")
+        .bind("[name='plan']", "plan")
         .render(
-          ({ state }) => html`
-            <input
-              type="radio"
-              name="plan"
-              value="free"
-              ${state.plan() === "free" ? "checked" : ""}
-            />
-            <input
-              type="radio"
-              name="plan"
-              value="pro"
-              ${state.plan() === "pro" ? "checked" : ""}
-            />
+          ({ state }) =>
+            html`
+            <input type="radio" name="plan" value="free" ${state.plan() === "free" ? "checked" : ""}>
+            <input type="radio" name="plan" value="pro" ${state.plan() === "pro" ? "checked" : ""}>
             <p>${state.plan()}</p>
           `,
         );
 
       const el = makeEl();
       const unmount = island.mount(el);
-
-      const free = el.querySelector<HTMLInputElement>('input[name="plan"][value="free"]')!;
+      const free = el.querySelector<HTMLInputElement>("input[name='plan'][value='free']")!;
       free.checked = true;
       free.dispatchEvent(new Event("change"));
-
       expect(el.querySelector("p")!.textContent).toBe("free");
-
       unmount();
       cleanup(el);
     });
 
-    it("client: programmatic radio state change updates checked input", () => {
+    it("client programmatic radio state change updates checked input", () => {
       let accessor!: (v?: string) => string | void;
 
       const island = ilha
         .state("plan", "free")
-        .bind("[name=plan]", "plan")
+        .bind("[name='plan']", "plan")
         .render(({ state }) => {
           accessor = state.plan as typeof accessor;
           return html`
-            <input
-              type="radio"
-              name="plan"
-              value="free"
-              ${state.plan() === "free" ? "checked" : ""}
-            />
-            <input
-              type="radio"
-              name="plan"
-              value="pro"
-              ${state.plan() === "pro" ? "checked" : ""}
-            />
+            <input type="radio" name="plan" value="free" ${state.plan() === "free" ? "checked" : ""}>
+            <input type="radio" name="plan" value="pro" ${state.plan() === "pro" ? "checked" : ""}>
           `;
         });
 
       const el = makeEl();
       const unmount = island.mount(el);
-
       accessor("pro");
-
-      expect(el.querySelector<HTMLInputElement>('input[name="plan"][value="free"]')!.checked).toBe(
+      expect(el.querySelector<HTMLInputElement>("input[name='plan'][value='free']")!.checked).toBe(
         false,
       );
-      expect(el.querySelector<HTMLInputElement>('input[name="plan"][value="pro"]')!.checked).toBe(
+      expect(el.querySelector<HTMLInputElement>("input[name='plan'][value='pro']")!.checked).toBe(
         true,
       );
-
       unmount();
       cleanup(el);
     });
 
-    it("client: radio group coerces DOM string to number from state type", () => {
+    it("client radio group coerces DOM string to number from state type", () => {
       const island = ilha
         .state("level", 2)
-        .bind("[name=level]", "level")
+        .bind("[name='level']", "level")
         .render(
-          ({ state }) => html`
-            <input type="radio" name="level" value="1" ${state.level() === 1 ? "checked" : ""} />
-            <input type="radio" name="level" value="2" ${state.level() === 2 ? "checked" : ""} />
-            <input type="radio" name="level" value="3" ${state.level() === 3 ? "checked" : ""} />
+          ({ state }) =>
+            html`
+            <input type="radio" name="level" value="1" ${state.level() === 1 ? "checked" : ""}>
+            <input type="radio" name="level" value="2" ${state.level() === 2 ? "checked" : ""}>
+            <input type="radio" name="level" value="3" ${state.level() === 3 ? "checked" : ""}>
             <p>${state.level()}</p>
           `,
         );
 
       const el = makeEl();
       const unmount = island.mount(el);
-
-      const three = el.querySelector<HTMLInputElement>('input[name="level"][value="3"]')!;
+      const three = el.querySelector<HTMLInputElement>("input[name='level'][value='3']")!;
       three.checked = true;
       three.dispatchEvent(new Event("change"));
-
       expect(el.querySelector("p")!.textContent).toBe("3");
-
       unmount();
       cleanup(el);
     });
   });
+});
 
-  describe(".onMount", () => {
-    it("runs the callback once on mount", () => {
-      const calls: number[] = [];
-      const island = ilha
-        .state("count", 0)
-        .onMount(() => {
-          calls.push(1);
-        })
-        .render(({ state }) => `<p>${state.count()}</p>`);
+// ─────────────────────────────────────────────
+// .onMount
+// ─────────────────────────────────────────────
 
-      const el = makeEl();
-      const unmount = island.mount(el);
-      expect(calls).toEqual([1]);
-      unmount();
-      cleanup(el);
+describe(".onMount", () => {
+  it("runs the callback once on mount", () => {
+    const calls: number[] = [];
+
+    const island = ilha
+      .state("count", 0)
+      .onMount(() => {
+        calls.push(1);
+      })
+      .render(({ state }) => `<p>${state.count()}</p>`);
+
+    const el = makeEl();
+    const unmount = island.mount(el);
+    expect(calls).toEqual([1]);
+    unmount();
+    cleanup(el);
+  });
+
+  it("does NOT run the callback more than once even when state changes", () => {
+    const calls: number[] = [];
+    let accessor!: (v: number) => void;
+
+    const island = ilha
+      .state("count", 0)
+      .onMount(({ state }) => {
+        accessor = state.count as typeof accessor;
+        calls.push(state.count());
+      })
+      .render(({ state }) => `<p>${state.count()}</p>`);
+
+    const el = makeEl();
+    const unmount = island.mount(el);
+    accessor(1);
+    accessor(2);
+    accessor(3);
+    expect(calls).toEqual([0]);
+    unmount();
+    cleanup(el);
+  });
+
+  it("receives correct ctx.host, ctx.state, and ctx.input", () => {
+    let capturedHost: Element | null = null;
+    let capturedCount: number | null = null;
+    let capturedLabel: string | null = null;
+
+    const island = ilha
+      .input(z.object({ label: z.string().default("hi") }))
+      // derive count from input via .derived rather than .state to avoid the
+      // untyped-input issue in state initialiser functions
+      .derived("labelLen", ({ input }) => input.label.length)
+      .onMount(({ host, derived, input }) => {
+        capturedHost = host;
+        capturedCount = derived.labelLen.value ?? null;
+        capturedLabel = input.label;
+      })
+      .render(({ derived }) => `<p>${derived.labelLen.value}</p>`);
+
+    const el = makeEl();
+    const unmount = island.mount(el, { label: "hello" });
+    expect(capturedHost!).toBe(el);
+    expect(capturedCount!).toBe(5);
+    expect(capturedLabel!).toBe("hello");
+    unmount();
+    cleanup(el);
+  });
+
+  it("runs the cleanup returned from onMount on unmount", () => {
+    const log: string[] = [];
+
+    const island = ilha
+      .onMount(() => {
+        log.push("mount");
+        return () => log.push("destroy");
+      })
+      .render(() => `<p>hi</p>`);
+
+    const el = makeEl();
+    const unmount = island.mount(el);
+    expect(log).toEqual(["mount"]);
+    unmount();
+    expect(log).toEqual(["mount", "destroy"]);
+    cleanup(el);
+  });
+
+  it("does NOT run the cleanup on each re-render, only on unmount", () => {
+    const log: string[] = [];
+    let accessor!: (v: number) => void;
+
+    const island = ilha
+      .state("count", 0)
+      .onMount(({ state }) => {
+        accessor = state.count as typeof accessor;
+        return () => log.push("destroy");
+      })
+      .render(({ state }) => `<p>${state.count()}</p>`);
+
+    const el = makeEl();
+    const unmount = island.mount(el);
+    accessor(1);
+    accessor(2);
+    expect(log).toEqual([]);
+    unmount();
+    expect(log).toEqual(["destroy"]);
+    cleanup(el);
+  });
+
+  it("does not subscribe to state reads inside onMount (no reactive tracking)", () => {
+    const renders: number[] = [];
+    let accessor!: (v: number) => void;
+
+    const island = ilha
+      .state("count", 0)
+      .onMount(({ state }) => {
+        void state.count(); // reading here must NOT create a reactive subscription
+      })
+      .render(({ state }) => {
+        accessor = state.count as typeof accessor;
+        renders.push(state.count());
+        return `<p>${state.count()}</p>`;
+      });
+
+    const el = makeEl();
+    const unmount = island.mount(el);
+    const initialRenders = renders.length;
+    accessor(99);
+    expect(renders.length).toBe(initialRenders + 1);
+    unmount();
+    cleanup(el);
+  });
+
+  it("is a no-op during SSR — callback never runs", () => {
+    const calls: number[] = [];
+
+    const island = ilha
+      .state("count", 7)
+      .onMount(() => {
+        calls.push(1);
+      })
+      .render(({ state }) => `<p>${state.count()}</p>`);
+
+    expect(island()).toBe("<p>7</p>");
+    expect(calls).toEqual([]);
+  });
+
+  it("two independently mounted instances each get their own onMount call", () => {
+    const log: string[] = [];
+
+    const island = ilha
+      .state("id", 0)
+      .onMount(({ host }) => {
+        log.push(host.id);
+      })
+      .render(({ state }) => `<p>${state.id()}</p>`);
+
+    const elA = makeEl();
+    elA.id = "inst-a";
+    const elB = makeEl();
+    elB.id = "inst-b";
+    const unmountA = island.mount(elA);
+    const unmountB = island.mount(elB);
+    expect(log).toEqual(["inst-a", "inst-b"]);
+    unmountA();
+    unmountB();
+    cleanup(elA);
+    cleanup(elB);
+  });
+
+  it("onMount cleanup of one instance does not affect the other", () => {
+    const log: string[] = [];
+
+    const island = ilha
+      .onMount(
+        ({ host }) =>
+          () =>
+            log.push(`destroy:${host.id}`),
+      )
+      .render(() => `<p>ok</p>`);
+
+    const elA = makeEl();
+    elA.id = "x";
+    const elB = makeEl();
+    elB.id = "y";
+    const unmountA = island.mount(elA);
+    const unmountB = island.mount(elB);
+    unmountA();
+    expect(log).toEqual(["destroy:x"]);
+    expect(log).not.toContain("destroy:y");
+    unmountB();
+    expect(log).toContain("destroy:y");
+    cleanup(elA);
+    cleanup(elB);
+  });
+
+  it("multiple .onMount calls all run once in declaration order", () => {
+    const log: string[] = [];
+
+    const island = ilha
+      // void the push return value so TS sees void, not number
+      .onMount(() => {
+        log.push("a");
+      })
+      .onMount(() => {
+        log.push("b");
+      })
+      .onMount(() => {
+        log.push("c");
+      })
+      .render(() => `<p>ok</p>`);
+
+    const el = makeEl();
+    const unmount = island.mount(el);
+    expect(log).toEqual(["a", "b", "c"]);
+    unmount();
+    cleanup(el);
+  });
+
+  it("all cleanup functions from multiple .onMount calls run on unmount", () => {
+    const log: string[] = [];
+
+    const island = ilha
+      .onMount(() => {
+        log.push("mount-a");
+        return () => log.push("destroy-a");
+      })
+      .onMount(() => {
+        log.push("mount-b");
+        return () => log.push("destroy-b");
+      })
+      .render(() => `<p>ok</p>`);
+
+    const el = makeEl();
+    const unmount = island.mount(el);
+    expect(log).toEqual(["mount-a", "mount-b"]);
+    unmount();
+    expect(log).toContain("destroy-a");
+    expect(log).toContain("destroy-b");
+    cleanup(el);
+  });
+
+  it("onMount without a return value does not throw on unmount", () => {
+    const island = ilha
+      .onMount(() => {
+        /* no return */
+      })
+      .render(() => `<p>ok</p>`);
+
+    const el = makeEl();
+    const unmount = island.mount(el);
+    expect(() => unmount()).not.toThrow();
+    cleanup(el);
+  });
+});
+
+// ─────────────────────────────────────────────
+// type() utility
+// ─────────────────────────────────────────────
+
+describe("type utility", () => {
+  describe("schema shape", () => {
+    it("returns a valid StandardSchemaV1 object", () => {
+      const schema = type<{ name: string }>();
+      expect(schema).toHaveProperty("~standard");
+      expect(schema["~standard"].version).toBe(1);
+      expect(schema["~standard"].vendor).toBe("ilha");
+      expect(typeof schema["~standard"].validate).toBe("function");
     });
 
-    it("does NOT run the callback more than once even when state changes", () => {
-      const calls: number[] = [];
-      let accessor!: (() => number) & ((v: number) => void);
-      const island = ilha
-        .state("count", 0)
-        .onMount(({ state }) => {
-          accessor = state.count as typeof accessor;
-          calls.push(state.count());
-        })
-        .render(({ state }) => `<p>${state.count()}</p>`);
-
-      const el = makeEl();
-      const unmount = island.mount(el);
-      accessor(1);
-      accessor(2);
-      accessor(3);
-      expect(calls).toEqual([0]);
-      unmount();
-      cleanup(el);
+    it("validate returns a success result with the same value", () => {
+      const schema = type<{ name: string }>();
+      const input = { name: "hello" };
+      const result = schema["~standard"].validate(input);
+      expect(result).toEqual({ value: input });
     });
 
-    it("receives correct ctx.host, ctx.state, and ctx.input", () => {
-      let capturedHost: Element | null = null;
-      let capturedCount: number | null = null;
-      let capturedInput: string | null = null;
-
-      const island = ilha
-        .input(z.object({ label: z.string().default("hi") }))
-        .state("count", (input) => input.label.length)
-        .onMount(({ host, state, input }) => {
-          capturedHost = host;
-          capturedCount = state.count();
-          capturedInput = input.label;
-        })
-        .render(({ state }) => `<p>${state.count()}</p>`);
-
-      const el = makeEl();
-      const unmount = island.mount(el, { label: "hello" });
-      expect(capturedHost!).toBe(el);
-      expect(capturedCount!).toBe(5);
-      expect(capturedInput!).toBe("hello");
-      unmount();
-      cleanup(el);
+    it("validate result has no issues property", () => {
+      const schema = type<number>();
+      const result = schema["~standard"].validate(42) as { value: unknown; issues?: unknown };
+      expect(result.issues).toBeUndefined();
     });
 
-    it("runs the cleanup returned from onMount on unmount", () => {
-      const log: string[] = [];
-      const island = ilha
-        .onMount(() => {
-          log.push("mount");
-          return () => {
-            log.push("destroy");
-          };
-        })
-        .render(() => `<p>hi</p>`);
-
-      const el = makeEl();
-      const unmount = island.mount(el);
-      expect(log).toEqual(["mount"]);
-      unmount();
-      expect(log).toEqual(["mount", "destroy"]);
-      cleanup(el);
-    });
-
-    it("does NOT run the cleanup on each re-render, only on unmount", () => {
-      const log: string[] = [];
-      let accessor!: (() => number) & ((v: number) => void);
-      const island = ilha
-        .state("count", 0)
-        .onMount(({ state }) => {
-          accessor = state.count as typeof accessor;
-          return () => {
-            log.push("destroy");
-          };
-        })
-        .render(({ state }) => `<p>${state.count()}</p>`);
-
-      const el = makeEl();
-      const unmount = island.mount(el);
-      accessor(1);
-      accessor(2);
-      expect(log).toEqual([]);
-      unmount();
-      expect(log).toEqual(["destroy"]);
-      cleanup(el);
-    });
-
-    it("does not subscribe to state reads inside onMount (no reactive tracking)", () => {
-      const renders: number[] = [];
-      let accessor!: (() => number) & ((v: number) => void);
-      const island = ilha
-        .state("count", 0)
-        .onMount(({ state }) => {
-          // reading state.count() here must NOT create a reactive subscription
-          void state.count();
-        })
-        .render(({ state }) => {
-          accessor = state.count as typeof accessor;
-          renders.push(state.count());
-          return `<p>${state.count()}</p>`;
-        });
-
-      const el = makeEl();
-      const unmount = island.mount(el);
-      const initialRenders = renders.length;
-      accessor(99); // triggers re-render only from the render effect, not from onMount
-      // exactly one additional render — not two
-      expect(renders.length).toBe(initialRenders + 1);
-      unmount();
-      cleanup(el);
-    });
-
-    it("multiple .onMount calls all run once in declaration order", () => {
-      const log: string[] = [];
-      const island = ilha
-        .onMount(() => {
-          log.push("a");
-        })
-        .onMount(() => {
-          log.push("b");
-        })
-        .onMount(() => {
-          log.push("c");
-        })
-        .render(() => `<p>ok</p>`);
-
-      const el = makeEl();
-      const unmount = island.mount(el);
-      expect(log).toEqual(["a", "b", "c"]);
-      unmount();
-      cleanup(el);
-    });
-
-    it("all cleanup functions from multiple .onMount calls run on unmount", () => {
-      const log: string[] = [];
-      const island = ilha
-        .onMount(() => {
-          log.push("mount-a");
-          return () => {
-            log.push("destroy-a");
-          };
-        })
-        .onMount(() => {
-          log.push("mount-b");
-          return () => {
-            log.push("destroy-b");
-          };
-        })
-        .render(() => `<p>ok</p>`);
-
-      const el = makeEl();
-      const unmount = island.mount(el);
-      expect(log).toEqual(["mount-a", "mount-b"]);
-      unmount();
-      expect(log).toContain("destroy-a");
-      expect(log).toContain("destroy-b");
-      cleanup(el);
-    });
-
-    it("onMount without a return value does not throw on unmount", () => {
-      const island = ilha
-        .onMount(() => {
-          /* no return */
-        })
-        .render(() => `<p>ok</p>`);
-
-      const el = makeEl();
-      const unmount = island.mount(el);
-      expect(() => unmount()).not.toThrow();
-      cleanup(el);
-    });
-
-    it("is a no-op during SSR — callback never runs", () => {
-      const calls: number[] = [];
-      const island = ilha
-        .state("count", 7)
-        .onMount(() => {
-          calls.push(1);
-        })
-        .render(({ state }) => `<p>${state.count()}</p>`);
-
-      expect(island()).toBe("<p>7</p>");
-      expect(calls).toEqual([]);
-    });
-
-    it("two independently mounted instances each get their own onMount call", () => {
-      const log: string[] = [];
-      const island = ilha
-        .state("id", 0)
-        .onMount(({ host }) => {
-          log.push(host.id);
-        })
-        .render(({ state }) => `<p>${state.id()}</p>`);
-
-      const elA = makeEl();
-      elA.id = "inst-a";
-      const elB = makeEl();
-      elB.id = "inst-b";
-      const unmountA = island.mount(elA);
-      const unmountB = island.mount(elB);
-      expect(log).toEqual(["inst-a", "inst-b"]);
-      unmountA();
-      unmountB();
-      cleanup(elA);
-      cleanup(elB);
-    });
-
-    it("onMount cleanup of one instance does not affect the other", () => {
-      const log: string[] = [];
-      const island = ilha
-        .onMount(({ host }) => {
-          return () => {
-            log.push(`destroy:${host.id}`);
-          };
-        })
-        .render(() => `<p>ok</p>`);
-
-      const elA = makeEl();
-      elA.id = "x";
-      const elB = makeEl();
-      elB.id = "y";
-      const unmountA = island.mount(elA);
-      const unmountB = island.mount(elB);
-      unmountA();
-      expect(log).toEqual(["destroy:x"]);
-      expect(log).not.toContain("destroy:y");
-      unmountB();
-      expect(log).toContain("destroy:y");
-      cleanup(elA);
-      cleanup(elB);
+    it("validate is synchronous (not a Promise)", () => {
+      const schema = type<string>();
+      const result = schema["~standard"].validate("hello");
+      expect(result instanceof Promise).toBe(false);
     });
   });
 
-  describe("type() utility", () => {
-    describe("schema shape", () => {
-      it("returns a valid StandardSchemaV1 object", () => {
-        const schema = type<{ name: string }>();
-        expect(schema).toHaveProperty("~standard");
-        expect(schema["~standard"].version).toBe(1);
-        expect(schema["~standard"].vendor).toBe("ilha");
-        expect(typeof schema["~standard"].validate).toBe("function");
-      });
-
-      it("validate returns a success result with the same value", () => {
-        const schema = type<{ name: string }>();
-        const input = { name: "hello" };
-        const result = schema["~standard"].validate(input);
-        expect(result).toEqual({ value: input });
-      });
-
-      it("validate result has no issues property", () => {
-        const schema = type<number>();
-        const result = schema["~standard"].validate(42) as { value: unknown; issues?: unknown };
-        expect(result.issues).toBeUndefined();
-      });
-
-      it("validate is synchronous (not a Promise)", () => {
-        const schema = type<string>();
-        const result = schema["~standard"].validate("hello");
-        expect(result instanceof Promise).toBe(false);
-      });
+  describe("pass-through behaviour (no coerce)", () => {
+    it("passes through a string", () => {
+      const schema = type<string>();
+      const result = schema["~standard"].validate("world") as { value: unknown };
+      expect(result.value).toBe("world");
     });
 
-    describe("pass-through behaviour (no coerce)", () => {
-      it("passes through a string", () => {
-        const schema = type<string>();
-        const result = schema["~standard"].validate("world") as { value: unknown };
-        expect(result.value).toBe("world");
-      });
-
-      it("passes through a number", () => {
-        const schema = type<number>();
-        const result = schema["~standard"].validate(99) as { value: unknown };
-        expect(result.value).toBe(99);
-      });
-
-      it("passes through null", () => {
-        const schema = type<null>();
-        const result = schema["~standard"].validate(null) as { value: unknown };
-        expect(result.value).toBeNull();
-      });
-
-      it("passes through undefined", () => {
-        const schema = type<undefined>();
-        const result = schema["~standard"].validate(undefined) as { value: unknown };
-        expect(result.value).toBeUndefined();
-      });
-
-      it("passes through an object by reference", () => {
-        const schema = type<{ x: number }>();
-        const input = { x: 1 };
-        const result = schema["~standard"].validate(input) as { value: unknown };
-        expect(result.value).toBe(input); // same reference
-      });
-
-      it("passes through an array by reference", () => {
-        const schema = type<number[]>();
-        const input = [1, 2, 3];
-        const result = schema["~standard"].validate(input) as { value: unknown };
-        expect(result.value).toBe(input);
-      });
+    it("passes through a number", () => {
+      const schema = type<number>();
+      const result = schema["~standard"].validate(99) as { value: unknown };
+      expect(result.value).toBe(99);
     });
 
-    describe("coerce function", () => {
-      it("applies coerce to the input value", () => {
-        const schema = type<string, number>((s) => s.length);
-        const result = schema["~standard"].validate("hello") as { value: unknown };
-        expect(result.value).toBe(5);
-      });
-
-      it("coerce can return a new object", () => {
-        const schema = type<{ raw: string }, { raw: string; trimmed: string }>(({ raw }) => ({
-          raw,
-          trimmed: raw.trim(),
-        }));
-        const result = schema["~standard"].validate({ raw: "  hi  " }) as { value: unknown };
-        expect(result.value).toEqual({ raw: "  hi  ", trimmed: "hi" });
-      });
-
-      it("coerce returning undefined passes through as undefined", () => {
-        const schema = type<string, undefined>(() => undefined);
-        const result = schema["~standard"].validate("anything") as { value: unknown };
-        expect(result.value).toBeUndefined();
-      });
-
-      it("each call invokes coerce exactly once", () => {
-        let calls = 0;
-        const schema = type<number, number>((n) => {
-          calls++;
-          return n * 2;
-        });
-        schema["~standard"].validate(3);
-        schema["~standard"].validate(5);
-        expect(calls).toBe(2);
-      });
+    it("passes through null", () => {
+      const schema = type<null>();
+      const result = schema["~standard"].validate(null) as { value: unknown };
+      expect(result.value).toBeNull();
     });
 
-    describe("multiple calls / independence", () => {
-      it("two schemas created from type() are independent objects", () => {
-        const a = type<string>();
-        const b = type<string>();
-        expect(a).not.toBe(b);
-      });
-
-      it("validate can be called multiple times on the same schema", () => {
-        const schema = type<number>();
-        const r1 = schema["~standard"].validate(1) as { value: unknown };
-        const r2 = schema["~standard"].validate(2) as { value: unknown };
-        expect(r1.value).toBe(1);
-        expect(r2.value).toBe(2);
-      });
+    it("passes through undefined", () => {
+      const schema = type<undefined>();
+      const result = schema["~standard"].validate(undefined) as { value: unknown };
+      expect(result.value).toBeUndefined();
     });
 
-    describe("compatibility with IlhaBuilder.input()", () => {
-      it("type() result is accepted by .input() without throwing", async () => {
-        const schema = type<{ msg: string }>();
-        expect(() => {
-          ilha.input(schema).render(({ input }) => `<p>${input.msg}</p>`);
-        }).not.toThrow();
-      });
+    it("passes through an object by reference", () => {
+      const schema = type<{ x: number }>();
+      const input = { x: 1 };
+      const result = schema["~standard"].validate(input) as { value: unknown };
+      expect(result.value).toBe(input);
+    });
 
-      it("island renders with props validated through type()", async () => {
-        const island = ilha
-          .input(type<{ label: string }>())
-          .render(({ input }) => `<span>${input.label}</span>`);
-        const html = await island({ label: "test" });
-        expect(html).toContain("test");
+    it("passes through an array by reference", () => {
+      const schema = type<number[]>();
+      const input = [1, 2, 3];
+      const result = schema["~standard"].validate(input) as { value: unknown };
+      expect(result.value).toBe(input);
+    });
+  });
+
+  describe("coerce function", () => {
+    it("applies coerce to the input value", () => {
+      const schema = type<string, number>((s) => s.length);
+      const result = schema["~standard"].validate("hello") as { value: unknown };
+      expect(result.value).toBe(5);
+    });
+
+    it("coerce can return a new object", () => {
+      const schema = type<{ raw: string }, { raw: string; trimmed: string }>(({ raw }) => ({
+        raw,
+        trimmed: raw.trim(),
+      }));
+      const result = schema["~standard"].validate({ raw: "  hi  " }) as { value: unknown };
+      expect(result.value).toEqual({ raw: "  hi  ", trimmed: "hi" });
+    });
+
+    it("coerce returning undefined passes through as undefined", () => {
+      const schema = type<string, undefined>(() => undefined);
+      const result = schema["~standard"].validate("anything") as { value: unknown };
+      expect(result.value).toBeUndefined();
+    });
+
+    it("each call invokes coerce exactly once", () => {
+      let calls = 0;
+      const schema = type<number, number>((n) => {
+        calls++;
+        return n * 2;
       });
+      schema["~standard"].validate(3);
+      schema["~standard"].validate(5);
+      expect(calls).toBe(2);
+    });
+  });
+
+  describe("multiple calls / independence", () => {
+    it("two schemas created from type() are independent objects", () => {
+      const a = type<string>();
+      const b = type<string>();
+      expect(a).not.toBe(b);
+    });
+
+    it("validate can be called multiple times on the same schema", () => {
+      const schema = type<number>();
+      const r1 = schema["~standard"].validate(1) as { value: unknown };
+      const r2 = schema["~standard"].validate(2) as { value: unknown };
+      expect(r1.value).toBe(1);
+      expect(r2.value).toBe(2);
+    });
+  });
+
+  describe("compatibility with IlhaBuilder.input()", () => {
+    it("type() result is accepted by .input() without throwing", () => {
+      const schema = type<{ msg: string }>();
+      expect(() => {
+        ilha.input(schema).render(({ input }) => `<p>${input.msg}</p>`);
+      }).not.toThrow();
+    });
+
+    it("island renders with props validated through type()", () => {
+      const island = ilha
+        .input(type<{ label: string }>())
+        .render(({ input }) => `<span>${input.label}</span>`);
+
+      const result = island({ label: "test" });
+      expect(result).toContain("test");
     });
   });
 });

@@ -85,7 +85,7 @@ const SLOT_ACCESSOR = Symbol("ilha.slotAccessor");
 const SIGNAL_ACCESSOR = Symbol("ilha.signalAccessor");
 
 const SLOT_ATTR = "data-ilha-slot";
-const SLOT_PROPS_ATTR = "data-ilha-props";
+const PROPS_ATTR = "data-ilha-props";
 const STATE_ATTR = "data-ilha-state";
 
 interface RawHtml {
@@ -240,20 +240,32 @@ function buildDerivedSignals<
   entries: DerivedEntry<TInput, TStateMap>[],
   state: IslandState<TStateMap>,
   input: TInput,
+  derivedSnapshot?: Record<string, DerivedValue<unknown>>,
 ): { proxy: IslandDerived<TDerivedMap>; stop: () => void } {
   const envelopes = new Map<string, ReturnType<typeof signal<DerivedValue<unknown>>>>();
   const stops: Array<() => void> = [];
 
   for (const entry of entries) {
-    const env = signal<DerivedValue<unknown>>({
+    const initialEnvelope: DerivedValue<unknown> = derivedSnapshot?.[entry.key] ?? {
       loading: true,
       value: undefined,
       error: undefined,
-    });
+    };
+    const env = signal<DerivedValue<unknown>>(initialEnvelope);
     envelopes.set(entry.key, env);
     let ac = new AbortController();
 
+    // If we restored from a snapshot, skip the very first run of the effect
+    // (the server already computed this value). The effect will still fire on
+    // subsequent reactive state changes.
+    let skipFirst = derivedSnapshot != null && entry.key in derivedSnapshot;
+
     const stopEffect = effect(() => {
+      if (skipFirst) {
+        skipFirst = false;
+        return;
+      }
+
       ac.abort();
       ac = new AbortController();
       const currentAc = ac;
@@ -414,11 +426,6 @@ function applyBindings<TStateMap extends Record<string, unknown>>(
 
 export type SignalAccessor<T> = MarkedSignalAccessor<T>;
 
-// MergeState: homomorphic remap that drops K and adds Record<K, V>.
-// -?: strips any optionality inherited from TStateMap so the resulting
-// IslandState properties are always required (never T | undefined at the
-// property level — undefined lives inside T when desired).
-// V is NOT widened here; the caller controls whether V includes undefined.
 type MergeState<TStateMap extends Record<string, unknown>, K extends string, V> = {
   [P in keyof TStateMap as P extends K ? never : P]-?: TStateMap[P];
 } & Record<K, V>;
@@ -427,6 +434,32 @@ export type IslandState<TStateMap extends Record<string, unknown>> = {
   readonly [K in keyof TStateMap]-?: SignalAccessor<TStateMap[K]>;
 };
 
+// ─────────────────────────────────────────────
+// Hydratable options
+// ─────────────────────────────────────────────
+
+export interface HydratableOptions {
+  /** Value for data-ilha — used by ilha.mount() registry on the client. */
+  name: string;
+  /** Wrapper element tag. Default: "div". */
+  as?: string;
+  /**
+   * Serialize resolved state and/or derived values into data-ilha-state so the
+   * client can skip redundant initialisation work.
+   *
+   * - true              → snapshot both state signals and derived envelopes
+   * - { state }         → snapshot only signal values
+   * - { derived }       → snapshot only derived envelopes (skip first fetch)
+   * - false / omitted   → no snapshot (default)
+   */
+  snapshot?: boolean | { state?: boolean; derived?: boolean };
+  /**
+   * When a snapshot is present, suppress the onMount handlers on the client.
+   * Default: true when any snapshot is active.
+   */
+  skipOnMount?: boolean;
+}
+
 export interface Island<
   TInput = Record<string, unknown>,
   _TStateMap extends Record<string, unknown> = Record<string, unknown>,
@@ -434,6 +467,7 @@ export interface Island<
   (props?: Partial<TInput>): string | Promise<string>;
   toString(props?: Partial<TInput>): string;
   mount(host: Element, props?: Partial<TInput>): () => void;
+  hydratable(props: Partial<TInput>, options: HydratableOptions): Promise<string>;
 }
 
 type AnyIsland = Island<Record<string, unknown>, Record<string, unknown>>;
@@ -461,10 +495,21 @@ type EffectContext<TInput, TStateMap extends Record<string, unknown>> = {
   host: Element;
 };
 
-export type OnMountContext<TInput, TStateMap extends Record<string, unknown>> = {
+// ─────────────────────────────────────────────
+// OnMountContext — now includes derived
+// ─────────────────────────────────────────────
+
+export type OnMountContext<
+  TInput,
+  TStateMap extends Record<string, unknown>,
+  TDerivedMap extends Record<string, unknown> = Record<string, never>,
+> = {
   state: IslandState<TStateMap>;
+  derived: IslandDerived<TDerivedMap>;
   input: TInput;
   host: Element;
+  /** True when the island was restored from a server-side snapshot. */
+  hydrated: boolean;
 };
 
 export type HandlerContext<TInput, TStateMap extends Record<string, unknown>> = {
@@ -557,8 +602,13 @@ interface EffectEntry<TInput, TStateMap extends Record<string, unknown>> {
   fn: (ctx: EffectContext<TInput, TStateMap>) => (() => void) | void;
 }
 
-interface OnMountEntry<TInput, TStateMap extends Record<string, unknown>> {
-  fn: (ctx: OnMountContext<TInput, TStateMap>) => (() => void) | void;
+// OnMountEntry is now generic over TDerivedMap too
+interface OnMountEntry<
+  TInput,
+  TStateMap extends Record<string, unknown>,
+  TDerivedMap extends Record<string, unknown>,
+> {
+  fn: (ctx: OnMountContext<TInput, TStateMap, TDerivedMap>) => (() => void) | void;
 }
 
 interface TransitionOptions {
@@ -568,7 +618,6 @@ interface TransitionOptions {
 
 export interface MountOptions {
   root?: Element;
-  hydrate?: boolean;
   lazy?: boolean;
 }
 
@@ -591,7 +640,7 @@ class IlhaBuilder<
   readonly _deriveds: DerivedEntry<TInput, TStateMap>[];
   readonly _ons: OnEntry<TInput, TStateMap>[];
   readonly _effects: EffectEntry<TInput, TStateMap>[];
-  readonly _onMounts: OnMountEntry<TInput, TStateMap>[];
+  readonly _onMounts: OnMountEntry<TInput, TStateMap, TDerivedMap>[];
   readonly _slots: Record<string, AnyIsland>;
   readonly _transition: TransitionOptions | null;
   readonly _binds: BindEntry<TStateMap>[];
@@ -602,7 +651,7 @@ class IlhaBuilder<
     deriveds: DerivedEntry<TInput, TStateMap>[],
     ons: OnEntry<TInput, TStateMap>[],
     effects: EffectEntry<TInput, TStateMap>[],
-    onMounts: OnMountEntry<TInput, TStateMap>[],
+    onMounts: OnMountEntry<TInput, TStateMap, TDerivedMap>[],
     slots: Record<string, AnyIsland>,
     transition: TransitionOptions | null,
     binds: BindEntry<TStateMap>[],
@@ -634,12 +683,6 @@ class IlhaBuilder<
     >(schema, [], [], [], [], [], {}, null, []);
   }
 
-  // V = undefined default means omitting init gives SignalAccessor<undefined>.
-  // V is stored as-is in MergeState — callers include | undefined in V when needed:
-  //   .state<any>("editor", undefined)            → SignalAccessor<any>
-  //   .state<Foo | undefined>("editor")           → SignalAccessor<Foo | undefined>
-  //   .state("count", 0)                          → SignalAccessor<number>
-  //   .state<"a"|"b">("tab", "a")                 → SignalAccessor<"a"|"b">
   state<V = undefined, K extends string = string>(
     key: K,
     init?: StateInit<TInput, V> | undefined,
@@ -650,7 +693,7 @@ class IlhaBuilder<
       this._deriveds as unknown as DerivedEntry<TInput, MergeState<TStateMap, K, V>>[],
       this._ons as unknown as OnEntry<TInput, MergeState<TStateMap, K, V>>[],
       this._effects as unknown as EffectEntry<TInput, MergeState<TStateMap, K, V>>[],
-      this._onMounts as unknown as OnMountEntry<TInput, MergeState<TStateMap, K, V>>[],
+      this._onMounts as unknown as OnMountEntry<TInput, MergeState<TStateMap, K, V>, TDerivedMap>[],
       this._slots,
       this._transition,
       this._binds as unknown as BindEntry<MergeState<TStateMap, K, V>>[],
@@ -667,7 +710,7 @@ class IlhaBuilder<
       [...this._deriveds, { key, fn: fn as DerivedFn<TInput, TStateMap, unknown> }],
       this._ons,
       this._effects,
-      this._onMounts,
+      this._onMounts as unknown as OnMountEntry<TInput, TStateMap, TDerivedMap & Record<K, V>>[],
       this._slots,
       this._transition,
       this._binds,
@@ -755,8 +798,9 @@ class IlhaBuilder<
     );
   }
 
+  // onMount now threads TDerivedMap through so the callback sees derived
   onMount(
-    fn: (ctx: OnMountContext<TInput, TStateMap>) => (() => void) | void,
+    fn: (ctx: OnMountContext<TInput, TStateMap, TDerivedMap>) => (() => void) | void,
   ): IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots> {
     return new IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots>(
       this._schema,
@@ -834,8 +878,8 @@ class IlhaBuilder<
               );
             }
             return makeSlotAccessor((props?: Record<string, unknown>) => {
-              const json = props ? ` data-props='${escapeHtml(JSON.stringify(props))}'` : "";
-              return `<div data-ilha-slot="${escapeHtml(name)}"${json}></div>`;
+              const json = props ? ` ${PROPS_ATTR}='${escapeHtml(JSON.stringify(props))}'` : "";
+              return `<div ${SLOT_ATTR}="${escapeHtml(name)}"${json}></div>`;
             });
           },
         },
@@ -950,19 +994,43 @@ class IlhaBuilder<
     }
 
     function mountIsland(host: Element, props?: Partial<TInput>): () => void {
+      // If caller didn't pass props, fall back to data-ilha-props attribute
+      if (props === undefined) {
+        const rawProps = host.getAttribute(PROPS_ATTR);
+        if (rawProps) {
+          try {
+            props = JSON.parse(rawProps) as Partial<TInput>;
+          } catch {
+            console.warn("[ilha] Failed to parse data-ilha-props");
+          }
+        }
+      }
+
       const input = resolveInput(props);
 
-      let snapshot: Record<string, unknown> | undefined;
+      let snapshotRaw: Record<string, unknown> | undefined;
       const rawState = host.getAttribute(STATE_ATTR);
       if (rawState) {
         try {
-          snapshot = JSON.parse(rawState) as Record<string, unknown>;
+          snapshotRaw = JSON.parse(rawState) as Record<string, unknown>;
         } catch {
           console.warn("[ilha] Failed to parse data-ilha-state");
         }
       }
 
-      const state = buildSignalState(input, snapshot);
+      // Split snapshot into state signals and derived envelopes
+      const stateSnapshot = snapshotRaw
+        ? (Object.fromEntries(
+            Object.entries(snapshotRaw).filter(([k]) => k !== "_derived" && k !== "_skipOnMount"),
+          ) as Record<string, unknown>)
+        : undefined;
+
+      const derivedSnapshot = snapshotRaw?._derived as
+        | Record<string, DerivedValue<unknown>>
+        | undefined;
+
+      const hydrated = snapshotRaw != null;
+      const state = buildSignalState(input, stateSnapshot);
       const cleanups: Array<() => void> = [];
 
       if (transition?.enter) {
@@ -974,7 +1042,7 @@ class IlhaBuilder<
         TInput,
         TStateMap,
         TDerivedMap
-      >(deriveds as DerivedEntry<TInput, TStateMap>[], state, input);
+      >(deriveds as DerivedEntry<TInput, TStateMap>[], state, input, derivedSnapshot);
       cleanups.push(stopDerived);
 
       const slotEls = new Map<string, Element>();
@@ -1060,30 +1128,25 @@ class IlhaBuilder<
         slotEls.set(name, slotEl);
 
         let slotProps: Record<string, unknown> | undefined;
-        const ilhaProps = slotEl.getAttribute(SLOT_PROPS_ATTR);
-        const dataProps = slotEl.getAttribute("data-props");
-        if (ilhaProps) {
+        // try data-ilha-props first, then data-props as fallback
+        const rawProps = slotEl.getAttribute(PROPS_ATTR) ?? slotEl.getAttribute("data-props");
+        if (rawProps) {
           try {
-            slotProps = JSON.parse(ilhaProps) as Record<string, unknown>;
+            slotProps = JSON.parse(rawProps) as Record<string, unknown>;
           } catch {
-            console.warn(`[ilha] Failed to parse ${SLOT_PROPS_ATTR} on [${SLOT_ATTR}="${name}"]`);
-          }
-        } else if (dataProps) {
-          try {
-            slotProps = JSON.parse(dataProps) as Record<string, unknown>;
-          } catch {
-            console.warn(`[ilha] Failed to parse data-props on [${SLOT_ATTR}="${name}"]`);
+            console.warn(`[ilha] Failed to parse props on [${SLOT_ATTR}="${name}"]`);
           }
         }
 
         cleanups.push(childIsland.mount(slotEl, slotProps));
       }
 
+      // Run onMount callbacks — derived is now passed in ctx
       for (const entry of onMounts) {
         const prevSub = setActiveSub(undefined);
         let userCleanup: (() => void) | void;
         try {
-          userCleanup = entry.fn({ state, input, host });
+          userCleanup = entry.fn({ state, derived, input, host, hydrated });
         } finally {
           setActiveSub(prevSub);
         }
@@ -1142,6 +1205,67 @@ class IlhaBuilder<
     island.toString = (props?: Partial<TInput>) => renderToStringSyncOnly(props);
     island.mount = (host: Element, props?: Partial<TInput>) => mountIsland(host, props);
 
+    island.hydratable = async (
+      props: Partial<TInput>,
+      opts: HydratableOptions,
+    ): Promise<string> => {
+      const { name, as: tag = "div", snapshot = false, skipOnMount: explicitSkipOnMount } = opts;
+
+      const resolvedProps = props ?? {};
+      const inner = await renderToString(resolvedProps);
+      const encodedProps = escapeHtml(JSON.stringify(resolvedProps));
+
+      let stateAttr = "";
+
+      if (snapshot !== false) {
+        const doState = snapshot === true || (snapshot as { state?: boolean }).state !== false;
+        const doDerived =
+          snapshot === true || (snapshot as { derived?: boolean }).derived !== false;
+        const doSkipOnMount = explicitSkipOnMount ?? (doState || doDerived);
+
+        const snapshotData: Record<string, unknown> = {};
+        const input = resolveInput(resolvedProps);
+        const plainState = buildPlainState(input);
+
+        if (doState) {
+          for (const entry of states) {
+            snapshotData[entry.key] = (
+              plainState[entry.key as keyof typeof plainState] as () => unknown
+            )();
+          }
+        }
+
+        if (doDerived) {
+          const derivedResults: Record<string, unknown> = {};
+          for (const entry of deriveds) {
+            try {
+              const result = await Promise.resolve(
+                entry.fn({
+                  state: plainState as never,
+                  input,
+                  signal: new AbortController().signal,
+                }),
+              );
+              derivedResults[entry.key] = { loading: false, value: result, error: undefined };
+            } catch (err) {
+              derivedResults[entry.key] = {
+                loading: false,
+                value: undefined,
+                error: err instanceof Error ? err.message : String(err),
+              };
+            }
+          }
+          snapshotData["_derived"] = derivedResults;
+        }
+
+        if (doSkipOnMount) snapshotData["_skipOnMount"] = true;
+
+        stateAttr = ` ${STATE_ATTR}='${escapeHtml(JSON.stringify(snapshotData))}'`;
+      }
+
+      return `<${tag} data-ilha="${escapeHtml(name)}" ${PROPS_ATTR}='${encodedProps}'${stateAttr}>${inner}</${tag}>`;
+    };
+
     return island;
   }
 }
@@ -1172,7 +1296,6 @@ type IslandRegistry = Record<string, AnyIsland>;
 function mountAll(registry: IslandRegistry, options: MountOptions = {}): MountResult {
   const root = options.root ?? document.body;
   const lazy = options.lazy ?? false;
-  const hydrate = options.hydrate ?? false;
   const unmounts: Array<() => void> = [];
 
   function activateEl(host: Element) {
@@ -1182,23 +1305,16 @@ function mountAll(registry: IslandRegistry, options: MountOptions = {}): MountRe
     if (!island) return;
 
     let props: Record<string, unknown> = {};
-    const rawProps = host.getAttribute("data-props");
+    const rawProps = host.getAttribute(PROPS_ATTR);
     if (rawProps) {
       try {
         props = JSON.parse(rawProps) as Record<string, unknown>;
       } catch {
-        console.warn(`[ilha] Failed to parse data-props on [data-ilha="${name}"]`);
+        console.warn(`[ilha] Failed to parse ${PROPS_ATTR} on [data-ilha="${name}"]`);
       }
     }
 
-    if (hydrate) {
-      const snapshot = host.innerHTML;
-      const unmount = island.mount(host, props);
-      if (!host.innerHTML) host.innerHTML = snapshot;
-      unmounts.push(unmount);
-    } else {
-      unmounts.push(island.mount(host, props));
-    }
+    unmounts.push(island.mount(host, props));
   }
 
   const els = Array.from(root.querySelectorAll("[data-ilha]"));
