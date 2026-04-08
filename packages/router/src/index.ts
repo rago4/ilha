@@ -1,0 +1,241 @@
+import { context } from "ilha";
+import type { Island } from "ilha";
+import ilha, { html } from "ilha";
+import { createRouter, addRoute, findRoute } from "rou3";
+
+// ─────────────────────────────────────────────
+// Environment
+// ─────────────────────────────────────────────
+
+const isBrowser = typeof window !== "undefined" && typeof document !== "undefined";
+
+// ─────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────
+
+export interface RouteRecord {
+  pattern: string;
+  island: Island<any, any>;
+}
+
+export interface NavigateOptions {
+  replace?: boolean;
+}
+
+export interface RouterBuilder {
+  route(pattern: string, island: Island<any, any>): RouterBuilder;
+  /** Client-side: mount into a DOM element or selector, returns unmount fn */
+  mount(target: string | Element): () => void;
+  /** Server-side: resolve a URL to an HTML string */
+  render(url: string | URL): string;
+}
+
+// ─────────────────────────────────────────────
+// Route context signals
+// ─────────────────────────────────────────────
+
+export const routePath = context<string>("router.path", "");
+export const routeParams = context<Record<string, string>>("router.params", {});
+export const routeSearch = context<string>("router.search", "");
+export const routeHash = context<string>("router.hash", "");
+
+export function useRoute() {
+  return { path: routePath, params: routeParams, search: routeSearch, hash: routeHash };
+}
+
+// ─────────────────────────────────────────────
+// Active island context signal
+// ─────────────────────────────────────────────
+
+const activeIsland = context<Island<any, any> | null>("router.active", null);
+
+// ─────────────────────────────────────────────
+// Route registry — reset per router() call
+// ─────────────────────────────────────────────
+
+let _records: RouteRecord[] = [];
+let _rou3 = createRouter<Island<any, any>>();
+
+// ─────────────────────────────────────────────
+// Sync signals from an explicit URL
+// ─────────────────────────────────────────────
+
+function syncRouteFromURL(url: string | URL): void {
+  const parsed = typeof url === "string" ? new URL(url, "http://localhost") : url;
+  const path = parsed.pathname;
+  const search = parsed.search;
+  const hash = parsed.hash;
+
+  const match = findRoute(_rou3, "GET", path);
+  const island = match?.data ?? null;
+
+  // rou3 returns decoded param values already; re-decode just in case
+  const params: Record<string, string> = {};
+  for (const [k, v] of Object.entries(match?.params ?? {})) {
+    params[k] = decodeURIComponent(v as string);
+  }
+
+  routePath(path);
+  routeParams(params);
+  routeSearch(search);
+  routeHash(hash);
+  activeIsland(island);
+}
+
+function syncRoute(): void {
+  syncRouteFromURL(location.href);
+}
+
+// ─────────────────────────────────────────────
+// Navigation — browser only
+// ─────────────────────────────────────────────
+
+export function navigate(to: string, opts: NavigateOptions = {}): void {
+  if (!isBrowser) return;
+  if (opts.replace) history.replaceState(null, "", to);
+  else history.pushState(null, "", to);
+  syncRoute();
+}
+
+// ─────────────────────────────────────────────
+// Link interception — browser only
+// ─────────────────────────────────────────────
+
+export function enableLinkInterception(root: Element | Document = document): () => void {
+  if (!isBrowser) return () => {};
+
+  const handler = (e: Event) => {
+    const target = (e.target as Element).closest("a");
+    if (!target) return;
+
+    const href = target.getAttribute("href");
+    if (!href) return;
+
+    const isAnchorOnly = href.startsWith("#");
+    const isBlank = target.getAttribute("target") === "_blank";
+    const hasModifier =
+      (e as MouseEvent).ctrlKey || (e as MouseEvent).metaKey || (e as MouseEvent).shiftKey;
+    const isExternal =
+      !!target.hostname &&
+      (target.hostname !== location.hostname || target.protocol !== location.protocol);
+
+    if (isExternal || isAnchorOnly || isBlank || hasModifier) return;
+
+    e.preventDefault();
+    navigate(target.pathname + target.search + target.hash);
+  };
+
+  root.addEventListener("click", handler);
+  return () => root.removeEventListener("click", handler);
+}
+
+// ─────────────────────────────────────────────
+// RouterView outlet island
+// ─────────────────────────────────────────────
+
+export const RouterView = ilha.render((): string => {
+  const island = activeIsland();
+  if (!island) return `<div data-router-empty></div>`;
+  return `<div data-router-view>${island.toString()}</div>`;
+});
+
+// ─────────────────────────────────────────────
+// RouterLink island
+// ─────────────────────────────────────────────
+
+export const RouterLink = ilha
+  .state("href", "")
+  .state("label", "")
+  .on("[data-link]@click", ({ state, event }) => {
+    event.preventDefault();
+    navigate(state.href());
+  })
+  .render(({ state }) => html`<a data-link href="${state.href}">${state.label}</a>`);
+
+// ─────────────────────────────────────────────
+// isActive()
+// ─────────────────────────────────────────────
+
+export function isActive(pattern: string): boolean {
+  const match = findRoute(_rou3, "GET", routePath());
+  if (!match) return false;
+  const record = _records.find((r) => r.island === match.data);
+  return record?.pattern === pattern;
+}
+
+// ─────────────────────────────────────────────
+// Router builder
+// ─────────────────────────────────────────────
+
+export function router(): RouterBuilder {
+  _records = [];
+  _rou3 = createRouter<Island<any, any>>();
+
+  let _popstateCleanup: (() => void) | null = null;
+  let _linkCleanup: (() => void) | null = null;
+
+  const builder: RouterBuilder = {
+    route(pattern: string, island: Island<any, any>): RouterBuilder {
+      _records.push({ pattern, island });
+      addRoute(_rou3, "GET", pattern, island);
+      return builder;
+    },
+
+    // ── Client-side ──────────────────────────
+    mount(target: string | Element): () => void {
+      if (!isBrowser) {
+        console.warn(
+          "[ilha-router] mount() called in a non-browser environment — use render() for SSR",
+        );
+        return () => {};
+      }
+
+      const host = typeof target === "string" ? document.querySelector(target) : target;
+
+      if (!host) {
+        console.warn(`[ilha-router] No element found for selector "${target}"`);
+        return () => {};
+      }
+
+      syncRoute();
+
+      const popHandler = () => syncRoute();
+      window.addEventListener("popstate", popHandler);
+      _popstateCleanup = () => window.removeEventListener("popstate", popHandler);
+
+      _linkCleanup = enableLinkInterception(document);
+
+      const unmountView = RouterView.mount(host);
+
+      return () => {
+        unmountView();
+        _popstateCleanup?.();
+        _linkCleanup?.();
+        _popstateCleanup = null;
+        _linkCleanup = null;
+      };
+    },
+
+    // ── Server-side ───────────────────────────
+    render(url: string | URL): string {
+      syncRouteFromURL(url);
+      return RouterView.toString();
+    },
+  };
+
+  return builder;
+}
+
+// ─────────────────────────────────────────────
+// Default export
+// ─────────────────────────────────────────────
+
+export default {
+  router,
+  navigate,
+  useRoute,
+  isActive,
+  enableLinkInterception,
+  RouterView,
+  RouterLink,
+};
