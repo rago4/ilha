@@ -159,19 +159,17 @@ const footerSections = [
 type FooterSection = Exclude<(typeof footerSections)[number], null>;
 
 function lucideIcon(iconNode: IconNode) {
-  const children = iconNode
-    .map(([tag, attrs]) => {
-      const attrString = Object.entries(attrs)
-        .filter(([, value]) => value !== undefined)
-        .map(([key, value]) => `${key}="${String(value)}"`)
-        .join(" ");
+  const children = iconNode.map(([tag, attrs]) => {
+    const attrString = Object.entries(attrs)
+      .filter(([, value]) => value !== undefined)
+      .map(([key, value]) => `${key}="${String(value)}"`)
+      .join(" ");
 
-      return `<${tag} ${attrString}></${tag}>`;
-    })
-    .join("");
+    return html`<${tag} ${raw(attrString)}></${tag}>`;
+  });
 
-  return `
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4" aria-hidden="true">
+  return html`
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="h-4 w-4">
       ${children}
     </svg>
   `;
@@ -188,7 +186,7 @@ function BlueprintTile(item: (typeof blueprintItems)[number], index: number) {
         ></div>
       </div>
     `;
-  }).join("");
+  });
 
   return html`
     <article
@@ -196,14 +194,14 @@ function BlueprintTile(item: (typeof blueprintItems)[number], index: number) {
       data-tile-index="${index}"
       class="group relative flex flex-col bg-white/5 p-7 backdrop-blur transition-colors duration-200 hover:bg-white/6"
     >
-      <div class="pointer-events-none absolute inset-0 overflow-hidden" aria-hidden="true">
+      <div class="pointer-events-none absolute inset-0 overflow-hidden">
         <div class="grid w-full grid-cols-10 place-items-stretch">
-          ${raw(grid)}
+          ${grid}
         </div>
       </div>
-      <div aria-hidden="true" class="pointer-events-none absolute inset-0 bg-linear-to-br from-white/5 via-transparent to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100"></div>
-      <div aria-hidden="true" class="relative mb-5 flex h-10 w-10 items-center justify-center border border-white/10 bg-white/5 text-slate-300">
-        ${raw(item.icon)}
+      <div class="pointer-events-none absolute inset-0 bg-linear-to-br from-white/5 via-transparent to-transparent opacity-0 transition-opacity duration-200 group-hover:opacity-100"></div>
+      <div class="relative mb-5 flex h-10 w-10 items-center justify-center border border-white/10 bg-white/5 text-slate-300">
+        ${item.icon}
       </div>
       <h2 class="relative text-xl font-semibold text-white">${item.title}</h2>
       <p class="relative mt-3 text-sm leading-7 text-slate-300">${item.copy}</p>
@@ -339,28 +337,30 @@ const Home = ilha
     return html`
     <main class="min-h-screen overflow-hidden bg-slate-950 font-sans text-slate-100 antialiased" id="main-content">
       <div class="relative isolate">
-        <div aria-hidden="true" class="absolute inset-0 -z-10 bg-linear-to-b from-slate-950 via-slate-950 to-slate-900"></div>
-        <div aria-hidden="true" class="absolute inset-0 -z-10 overflow-hidden opacity-20">
+        <div class="absolute inset-0 -z-10 bg-linear-to-b from-slate-950 via-slate-950 to-slate-900"></div>
+        <div class="absolute inset-0 -z-10 overflow-hidden opacity-20">
           <div class="grid h-full w-full grid-cols-6 md:grid-cols-10 lg:grid-cols-12">
-            ${raw(
-              Array.from(
-                { length: 12 },
-                () => '<div class="border-l border-white/10 last:border-r"></div>',
-              ).join(""),
+            ${Array.from(
+              { length: 12 },
+              () =>
+                html`
+                  <div class="border-l border-white/10 last:border-r"></div>
+                `,
             )}
           </div>
           <div class="absolute inset-0 grid grid-rows-6 md:grid-rows-8 lg:grid-rows-10">
-            ${raw(
-              Array.from(
-                { length: 10 },
-                () => '<div class="border-t border-white/10 last:border-b"></div>',
-              ).join(""),
+            ${Array.from(
+              { length: 10 },
+              () =>
+                html`
+                  <div class="border-t border-white/10 last:border-b"></div>
+                `,
             )}
           </div>
         </div>
-        <div aria-hidden="true" class="absolute inset-x-0 top-0 -z-10 h-96 bg-linear-to-b from-blue-500/20 via-cyan-400/10 to-transparent"></div>
-        <div aria-hidden="true" class="absolute left-0 top-24 -z-10 h-72 w-72 rotate-12 bg-blue-500/10 blur-3xl"></div>
-        <div aria-hidden="true" class="absolute right-0 top-40 -z-10 h-80 w-80 -rotate-6 bg-cyan-400/10 blur-3xl"></div>
+        <div class="absolute inset-x-0 top-0 -z-10 h-96 bg-linear-to-b from-blue-500/20 via-cyan-400/10 to-transparent"></div>
+        <div class="absolute left-0 top-24 -z-10 h-72 w-72 rotate-12 bg-blue-500/10 blur-3xl"></div>
+        <div class="absolute right-0 top-40 -z-10 h-80 w-80 -rotate-6 bg-cyan-400/10 blur-3xl"></div>
 
         <div class="mx-auto flex min-h-screen w-full max-w-7xl flex-col px-6 py-6 sm:px-8 lg:px-10">
           <header class="flex items-center justify-between pb-5">
@@ -370,16 +370,12 @@ const Home = ilha
             </a>
 
             <nav class="hidden items-center gap-3 md:flex" aria-label="Primary">
-              ${raw(
-                primaryLinks
-                  .map(
-                    (link) => html`
-                      <a href="${link.href}" class="${link.className}">
-                        ${link.label}
-                      </a>
-                    `,
-                  )
-                  .join(""),
+              ${primaryLinks.map(
+                (link) => html`
+                  <a href="${link.href}" class="${link.className}">
+                    ${link.label}
+                  </a>
+                `,
               )}
             </nav>
           </header>
@@ -396,16 +392,12 @@ const Home = ilha
                 </p>
 
                 <div class="mt-8 flex max-w-xl flex-col gap-3 sm:max-w-none sm:flex-row sm:flex-wrap">
-                  ${raw(
-                    heroLinks
-                      .map(
-                        (link) => html`
-                          <a href="${link.href}" class="${link.className}">
-                            ${link.label}
-                          </a>
-                        `,
-                      )
-                      .join(""),
+                  ${heroLinks.map(
+                    (link) => html`
+                      <a href="${link.href}" class="${link.className}">
+                        ${link.label}
+                      </a>
+                    `,
                   )}
                 </div>
               </div>
@@ -414,10 +406,10 @@ const Home = ilha
                 <h2 id="example-heading" class="sr-only">
                   Code example
                 </h2>
-                <div aria-hidden="true" class="absolute inset-0 rounded-3xl bg-cyan-400/10 blur-2xl"></div>
+                <div class="absolute inset-0 rounded-3xl bg-cyan-400/10 blur-2xl"></div>
                 <div class="relative overflow-hidden border border-white/10 bg-slate-900/80 shadow-2xl backdrop-blur">
                   <div class="flex items-center justify-between border-b border-white/10 px-5 py-4">
-                    <div aria-hidden="true" class="flex items-center gap-2">
+                    <div class="flex items-center gap-2">
                       <span class="h-2.5 w-2.5 rounded-full bg-rose-400"></span>
                       <span class="h-2.5 w-2.5 rounded-full bg-amber-300"></span>
                       <span class="h-2.5 w-2.5 rounded-full bg-emerald-400"></span>
@@ -439,7 +431,7 @@ const Home = ilha
             </h2>
             <div class="relative overflow-hidden border border-white/10">
               <div class="grid divide-y divide-white/10 md:grid-cols-2 md:divide-x md:divide-y">
-                ${raw(blueprintItems.map((item, index) => BlueprintTile(item, index)).join(""))}
+                ${blueprintItems.map((item, index) => BlueprintTile(item, index))}
               </div>
             </div>
           </section>
@@ -447,31 +439,23 @@ const Home = ilha
           <footer class="mt-8 py-10">
             <h2 class="sr-only">Footer</h2>
             <div class="grid gap-10 text-sm text-slate-400 md:grid-cols-4 md:items-start">
-              ${raw(
-                footerSections
-                  .map((section, index) =>
-                    section
-                      ? html`
-                          <nav aria-label="${(section as FooterSection).ariaLabel}" class="${"className" in section ? section.className : ""}">
-                            <h3 class="font-mono text-xs uppercase tracking-widest text-slate-500">
-                              ${(section as FooterSection).title}
-                            </h3>
-                            <div class="mt-4 grid gap-3 justify-items-start">
-                              ${raw(
-                                (section as FooterSection).links
-                                  .map(
-                                    (link) => html`
-                                      <a href="${link.href}" class="${footerLinkClass}">${link.label}</a>
-                                    `,
-                                  )
-                                  .join(""),
-                              )}
-                            </div>
-                          </nav>
-                        `
-                      : `<div class="hidden md:block" data-spacer="${index}"></div>`,
-                  )
-                  .join(""),
+              ${footerSections.map((section, index) =>
+                section
+                  ? html`
+                    <nav aria-label="${(section as FooterSection).ariaLabel}" class="${"className" in section ? section.className : ""}">
+                    <h3 class="font-mono text-xs uppercase tracking-widest text-slate-500">
+                        ${(section as FooterSection).title}
+                    </h3>
+                    <div class="mt-4 grid gap-3 justify-items-start">
+                        ${(section as FooterSection).links.map(
+                          (link) => html`
+                            <a href="${link.href}" class="${footerLinkClass}">${link.label}</a>
+                        `,
+                        )}
+                    </div>
+                    </nav>
+                    `
+                  : html`<div class="hidden md:block" data-spacer="${index}"></div>`,
               )}
             </div>
 
