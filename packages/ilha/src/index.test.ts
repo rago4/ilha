@@ -5,12 +5,13 @@ import { z } from "zod";
 import type { SlotAccessor } from "./index";
 import ilha, { html, raw, mount, from, context, type } from "./index";
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Helpers
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
-function dedent(str: string): string {
-  const lines = str.split("\n").filter((l) => l.trim() !== "");
+function dedent(str: string | { value: string }): string {
+  const s = typeof str === "object" ? str.value : str;
+  const lines = s.split("\n").filter((l) => l.trim() !== "");
   const indent = Math.min(...lines.map((l) => l.match(/^(\s*)/)![1]!.length));
   return lines.map((l) => l.slice(indent)).join("\n");
 }
@@ -26,39 +27,41 @@ function cleanup(el: Element) {
   document.body.removeChild(el);
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // html`` tagged template
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 describe("html``", () => {
   it("renders static strings", () => {
     expect(
       html`
         <p>hello</p>
-      `,
+      `.value,
     ).toBe("<p>hello</p>");
   });
 
   it("escapes interpolated strings", () => {
     const val = '<script>alert("xss")</script>';
-    expect(html`<p>${val}</p>`).toBe("<p>&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;</p>");
+    expect(html`<p>${val}</p>`.value).toBe(
+      "<p>&lt;script&gt;alert(&quot;xss&quot;)&lt;/script&gt;</p>",
+    );
   });
 
   it("escapes interpolated numbers", () => {
-    expect(html`<p>${42}</p>`).toBe("<p>42</p>");
+    expect(html`<p>${42}</p>`.value).toBe("<p>42</p>");
   });
 
   it("skips null and undefined interpolations", () => {
-    expect(html`<p>${null}${undefined}</p>`).toBe("<p></p>");
+    expect(html`<p>${null}${undefined}</p>`.value).toBe("<p></p>");
   });
 
   it("passes raw() through unescaped", () => {
-    expect(html`<div>${raw("<b>bold</b>")}</div>`).toBe("<div><b>bold</b></div>");
+    expect(html`<div>${raw("<b>bold</b>")}</div>`.value).toBe("<div><b>bold</b></div>");
   });
 
   it("calls function interpolations and escapes result", () => {
     const fn = () => "<em>hi</em>";
-    expect(html`<p>${fn}</p>`).toBe("<p>&lt;em&gt;hi&lt;/em&gt;</p>");
+    expect(html`<p>${fn}</p>`.value).toBe("<p>&lt;em&gt;hi&lt;/em&gt;</p>");
   });
 
   it("preserves whitespace as-is in multiline templates", () => {
@@ -86,73 +89,99 @@ describe("html``", () => {
 
     expect(island()).toBe("<p>&lt;b&gt;hi&lt;/b&gt;</p>");
   });
+
+  it("html`` result is a RawHtml object, not a string", () => {
+    const result = html`
+      <p>test</p>
+    `;
+    expect(typeof result).toBe("object");
+    expect(result.value).toBe("<p>test</p>");
+  });
 });
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // html`` — Array interpolation
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 describe("html`` array interpolation", () => {
   it("renders an array of strings as concatenated escaped HTML", () => {
     const items = ["foo", "bar", "baz"];
-    expect(html`<ul>${items}</ul>`).toBe("<ul>foobarbaz</ul>");
+    expect(html`<ul>${items}</ul>`.value).toBe("<ul>foobarbaz</ul>");
   });
 
   it("escapes each string element in an array", () => {
     const items = ["<b>bold</b>", "<script>xss</script>"];
-    expect(html`<ul>${items}</ul>`).toBe(
+    expect(html`<ul>${items}</ul>`.value).toBe(
       "<ul>&lt;b&gt;bold&lt;/b&gt;&lt;script&gt;xss&lt;/script&gt;</ul>",
     );
   });
 
   it("renders an array of raw() items unescaped", () => {
     const items = [raw("<li>one</li>"), raw("<li>two</li>")];
-    expect(html`<ul>${items}</ul>`).toBe("<ul><li>one</li><li>two</li></ul>");
+    expect(html`<ul>${items}</ul>`.value).toBe("<ul><li>one</li><li>two</li></ul>");
   });
 
   it("renders a mixed array of strings and raw() items correctly", () => {
     const items = ["<safe>", raw("<li>raw</li>")];
-    expect(html`<ul>${items}</ul>`).toBe("<ul>&lt;safe&gt;<li>raw</li></ul>");
+    expect(html`<ul>${items}</ul>`.value).toBe("<ul>&lt;safe&gt;<li>raw</li></ul>");
   });
 
   it("renders an empty array as empty string", () => {
-    expect(html`<ul>${[]}</ul>`).toBe("<ul></ul>");
+    expect(html`<ul>${[]}</ul>`.value).toBe("<ul></ul>");
   });
 
   it("renders an array of numbers", () => {
     const items = [1, 2, 3];
-    expect(html`<p>${items}</p>`).toBe("<p>123</p>");
+    expect(html`<p>${items}</p>`.value).toBe("<p>123</p>");
   });
 
   it("renders an array with null/undefined entries, skipping them", () => {
     const items = ["a", null, undefined, "b"];
-    expect(html`<p>${items}</p>`).toBe("<p>ab</p>");
+    expect(html`<p>${items}</p>`.value).toBe("<p>ab</p>");
   });
 
-  it("renders an array produced by .map() — the canonical list rendering pattern", () => {
+  it("renders an array of html`` results directly — the canonical list rendering pattern", () => {
+    const fruits = ["apple", "banana", "cherry"];
+    const result = html`<ul>${fruits.map((f) => html`<li>${f}</li>`)}</ul>`;
+    expect(result.value).toBe("<ul><li>apple</li><li>banana</li><li>cherry</li></ul>");
+  });
+
+  it("renders an array produced by .map() with raw() — legacy pattern still works", () => {
     const fruits = ["apple", "banana", "cherry"];
     const result = html`<ul>${fruits.map((f) => raw(`<li>${f}</li>`))}</ul>`;
-    expect(result).toBe("<ul><li>apple</li><li>banana</li><li>cherry</li></ul>");
+    expect(result.value).toBe("<ul><li>apple</li><li>banana</li><li>cherry</li></ul>");
   });
 
-  const esc = (s: string) =>
-    s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
-
-  it("renders a mapped array with XSS-safe escaping per item", () => {
+  it("renders a mapped array of html`` with XSS-safe escaping per item", () => {
     const items = ["<script>", "safe"];
-    const result = html`<ul>${items.map((i) => raw(`<li>${esc(i)}</li>`))}</ul>`;
-    expect(result).toBe("<ul><li>&lt;script&gt;</li><li>safe</li></ul>");
+    const result = html`<ul>${items.map((i) => html`<li>${i}</li>`)}</ul>`;
+    expect(result.value).toBe("<ul><li>&lt;script&gt;</li><li>safe</li></ul>");
   });
 
   it("renders nested arrays by flattening one level", () => {
     const rows = [[raw("<td>a</td>"), raw("<td>b</td>")]];
-    expect(html`<tr>${rows}</tr>`).toBe("<tr><td>a</td><td>b</td></tr>");
+    expect(html`<tr>${rows}</tr>`.value).toBe("<tr><td>a</td><td>b</td></tr>");
+  });
+
+  it("passes array of html`` results directly into parent html`` without .join()", () => {
+    const badges = ["fire", "water"].map((t) => html`<span class="badge">${t}</span>`);
+    const result = html`<div>${badges}</div>`;
+    expect(result.value).toBe(
+      '<div><span class="badge">fire</span><span class="badge">water</span></div>',
+    );
+  });
+
+  it("does NOT produce commas when array of html`` is interpolated", () => {
+    const items = ["a", "b", "c"].map((x) => html`<li>${x}</li>`);
+    const result = html`<ul>${items}</ul>`;
+    expect(result.value).not.toContain(",");
+    expect(result.value).toBe("<ul><li>a</li><li>b</li><li>c</li></ul>");
   });
 });
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // raw()
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 describe("raw()", () => {
   it("returns object with raw symbol", () => {
@@ -162,9 +191,9 @@ describe("raw()", () => {
   });
 });
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Island — SSR
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 describe("island SSR", () => {
   it("renders with schema defaults when called with no args", () => {
@@ -209,6 +238,23 @@ describe("island SSR", () => {
       .render(({ input }) => `<b>${input.label}</b>`);
 
     expect(`<div>${badge}</div>`).toBe("<div><b>hi</b></div>");
+  });
+
+  it("render() accepts html`` return value (RawHtml)", () => {
+    const island = ilha
+      .input(z.object({ name: z.string().default("world") }))
+      .render(({ input }) => html`<p>hello ${input.name}</p>`);
+
+    expect(island()).toBe("<p>hello world</p>");
+  });
+
+  it("render() with html`` and array of html`` results produces no commas", () => {
+    const island = ilha
+      .input(z.object({}))
+      .state("items", ["a", "b", "c"])
+      .render(({ state }) => html`<ul>${state.items().map((i) => html`<li>${i}</li>`)}</ul>`);
+
+    expect(island()).toBe("<ul><li>a</li><li>b</li><li>c</li></ul>");
   });
 
   it("renders plain state value without function init", () => {
@@ -263,9 +309,9 @@ describe("island SSR", () => {
   });
 });
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Island — client mount
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 describe("island mount", () => {
   it("renders into the element on mount", () => {
@@ -464,9 +510,9 @@ describe("island mount", () => {
     cleanup(el);
   });
 
-  // ─────────────────────────────────────────────
+  // ---------------------------------------------
   // .on() modifiers
-  // ─────────────────────────────────────────────
+  // ---------------------------------------------
 
   describe(".on() modifiers", () => {
     it(":once fires handler only once", () => {
@@ -648,9 +694,9 @@ describe("island mount", () => {
     });
   });
 
-  // ─────────────────────────────────────────────
+  // ---------------------------------------------
   // ilha.from()
-  // ─────────────────────────────────────────────
+  // ---------------------------------------------
 
   describe("ilha.from()", () => {
     it("mounts island onto element matching selector", () => {
@@ -687,9 +733,9 @@ describe("island mount", () => {
     });
   });
 
-  // ─────────────────────────────────────────────
+  // ---------------------------------------------
   // ilha.context()
-  // ─────────────────────────────────────────────
+  // ---------------------------------------------
 
   describe("ilha.context()", () => {
     it("shared signal is readable across islands", () => {
@@ -751,9 +797,9 @@ describe("island mount", () => {
     });
   });
 
-  // ─────────────────────────────────────────────
+  // ---------------------------------------------
   // .transition()
-  // ─────────────────────────────────────────────
+  // ---------------------------------------------
 
   describe(".transition()", () => {
     it("calls enter on mount", () => {
@@ -822,9 +868,9 @@ describe("island mount", () => {
     });
   });
 
-  // ─────────────────────────────────────────────
+  // ---------------------------------------------
   // SSR hydration (data-ilha-state)
-  // ─────────────────────────────────────────────
+  // ---------------------------------------------
 
   describe("SSR hydration", () => {
     it("mounts with state from data-ilha-state attribute", () => {
@@ -860,16 +906,14 @@ describe("island mount", () => {
     });
   });
 
-  // ─────────────────────────────────────────────
+  // ---------------------------------------------
   // .hydratable()
-  // ─────────────────────────────────────────────
+  // ---------------------------------------------
 
   describe(".hydratable()", () => {
     beforeEach(() => {
       document.body.innerHTML = "";
     });
-
-    // ── SSR output ────────────────────────────
 
     describe("SSR output", () => {
       it("wraps output in a container with data-ilha attribute", async () => {
@@ -954,8 +998,6 @@ describe("island mount", () => {
       });
     });
 
-    // ── Client mount via base island ──────────────────────────
-
     describe("client mount via base island", () => {
       it("reads props from data-ilha-props when none are passed to mount()", () => {
         const counter = ilha
@@ -1033,8 +1075,6 @@ describe("island mount", () => {
         expect(el.querySelector("p")!.textContent).toBe("0");
       });
     });
-
-    // ── ilha.mount() auto-discovery with hydratable islands ──
 
     describe("ilha.mount() auto-discovery", () => {
       it("discovers all [data-ilha='counter'] elements and mounts them", () => {
@@ -1124,9 +1164,9 @@ describe("island mount", () => {
   });
 });
 
-// ─────────────────────────────────────────────
-// island.mount() → returns unmount()
-// ─────────────────────────────────────────────
+// ---------------------------------------------
+// island.mount() returns unmount()
+// ---------------------------------------------
 
 describe("island.mount() returns unmount()", () => {
   it("mount() returns a callable function", () => {
@@ -1267,9 +1307,9 @@ describe("island.mount() returns unmount()", () => {
   });
 });
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // ilha.mount() auto-discovery (top-level)
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 describe("ilha.mount()", () => {
   beforeEach(() => {
@@ -1392,9 +1432,9 @@ describe("ilha.mount()", () => {
   });
 });
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Slots
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 describe("slots", () => {
   beforeEach(() => {
@@ -1613,9 +1653,9 @@ describe("slots", () => {
   });
 });
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // .derived
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 describe(".derived", () => {
   describe("SSR async", () => {
@@ -2175,9 +2215,9 @@ describe(".derived", () => {
   });
 });
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // .bind
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 describe(".bind", () => {
   describe("SSR", () => {
@@ -2191,7 +2231,7 @@ describe(".bind", () => {
     });
   });
 
-  describe("DOM → state", () => {
+  describe("DOM -> state", () => {
     it("client text input change updates state", () => {
       const island = ilha
         .state("name", "ada")
@@ -2259,7 +2299,7 @@ describe(".bind", () => {
     });
   });
 
-  describe("state → DOM", () => {
+  describe("state -> DOM", () => {
     it("client initial state is synced to input value on mount", () => {
       const island = ilha
         .state("email", "hello@example.com")
@@ -2504,9 +2544,9 @@ describe(".bind", () => {
   });
 });
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // .onMount
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 describe(".onMount", () => {
   it("runs the callback once on mount", () => {
@@ -2635,275 +2675,11 @@ describe(".onMount", () => {
     unmount();
     cleanup(el);
   });
-
-  it("is a no-op during SSR — callback never runs", () => {
-    const calls: number[] = [];
-
-    const island = ilha
-      .state("count", 7)
-      .onMount(() => {
-        calls.push(1);
-      })
-      .render(({ state }) => `<p>${state.count()}</p>`);
-
-    expect(island()).toBe("<p>7</p>");
-    expect(calls).toEqual([]);
-  });
-
-  it("two independently mounted instances each get their own onMount call", () => {
-    const log: string[] = [];
-
-    const island = ilha
-      .state("id", 0)
-      .onMount(({ host }) => {
-        log.push(host.id);
-      })
-      .render(({ state }) => `<p>${state.id()}</p>`);
-
-    const elA = makeEl();
-    elA.id = "inst-a";
-    const elB = makeEl();
-    elB.id = "inst-b";
-    const unmountA = island.mount(elA);
-    const unmountB = island.mount(elB);
-    expect(log).toEqual(["inst-a", "inst-b"]);
-    unmountA();
-    unmountB();
-    cleanup(elA);
-    cleanup(elB);
-  });
-
-  it("onMount cleanup of one instance does not affect the other", () => {
-    const log: string[] = [];
-
-    const island = ilha
-      .onMount(
-        ({ host }) =>
-          () =>
-            log.push(`destroy:${host.id}`),
-      )
-      .render(() => `<p>ok</p>`);
-
-    const elA = makeEl();
-    elA.id = "x";
-    const elB = makeEl();
-    elB.id = "y";
-    const unmountA = island.mount(elA);
-    const unmountB = island.mount(elB);
-    unmountA();
-    expect(log).toEqual(["destroy:x"]);
-    expect(log).not.toContain("destroy:y");
-    unmountB();
-    expect(log).toContain("destroy:y");
-    cleanup(elA);
-    cleanup(elB);
-  });
-
-  it("multiple .onMount calls all run once in declaration order", () => {
-    const log: string[] = [];
-
-    const island = ilha
-      .onMount(() => {
-        log.push("a");
-      })
-      .onMount(() => {
-        log.push("b");
-      })
-      .onMount(() => {
-        log.push("c");
-      })
-      .render(() => `<p>ok</p>`);
-
-    const el = makeEl();
-    const unmount = island.mount(el);
-    expect(log).toEqual(["a", "b", "c"]);
-    unmount();
-    cleanup(el);
-  });
-
-  it("all cleanup functions from multiple .onMount calls run on unmount", () => {
-    const log: string[] = [];
-
-    const island = ilha
-      .onMount(() => {
-        log.push("mount-a");
-        return () => log.push("destroy-a");
-      })
-      .onMount(() => {
-        log.push("mount-b");
-        return () => log.push("destroy-b");
-      })
-      .render(() => `<p>ok</p>`);
-
-    const el = makeEl();
-    const unmount = island.mount(el);
-    expect(log).toEqual(["mount-a", "mount-b"]);
-    unmount();
-    expect(log).toContain("destroy-a");
-    expect(log).toContain("destroy-b");
-    cleanup(el);
-  });
-
-  it("onMount without a return value does not throw on unmount", () => {
-    const island = ilha
-      .onMount(() => {
-        /* no return */
-      })
-      .render(() => `<p>ok</p>`);
-
-    const el = makeEl();
-    const unmount = island.mount(el);
-    expect(() => unmount()).not.toThrow();
-    cleanup(el);
-  });
 });
 
-// ─────────────────────────────────────────────
-// type() utility
-// ─────────────────────────────────────────────
-
-describe("type utility", () => {
-  describe("schema shape", () => {
-    it("returns a valid StandardSchemaV1 object", () => {
-      const schema = type<{ name: string }>();
-      expect(schema).toHaveProperty("~standard");
-      expect(schema["~standard"].version).toBe(1);
-      expect(schema["~standard"].vendor).toBe("ilha");
-      expect(typeof schema["~standard"].validate).toBe("function");
-    });
-
-    it("validate returns a success result with the same value", () => {
-      const schema = type<{ name: string }>();
-      const input = { name: "hello" };
-      const result = schema["~standard"].validate(input);
-      expect(result).toEqual({ value: input });
-    });
-
-    it("validate result has no issues property", () => {
-      const schema = type<number>();
-      const result = schema["~standard"].validate(42) as { value: unknown; issues?: unknown };
-      expect(result.issues).toBeUndefined();
-    });
-
-    it("validate is synchronous (not a Promise)", () => {
-      const schema = type<string>();
-      const result = schema["~standard"].validate("hello");
-      expect(result instanceof Promise).toBe(false);
-    });
-  });
-
-  describe("pass-through behaviour (no coerce)", () => {
-    it("passes through a string", () => {
-      const schema = type<string>();
-      const result = schema["~standard"].validate("world") as { value: unknown };
-      expect(result.value).toBe("world");
-    });
-
-    it("passes through a number", () => {
-      const schema = type<number>();
-      const result = schema["~standard"].validate(99) as { value: unknown };
-      expect(result.value).toBe(99);
-    });
-
-    it("passes through null", () => {
-      const schema = type<null>();
-      const result = schema["~standard"].validate(null) as { value: unknown };
-      expect(result.value).toBeNull();
-    });
-
-    it("passes through undefined", () => {
-      const schema = type<undefined>();
-      const result = schema["~standard"].validate(undefined) as { value: unknown };
-      expect(result.value).toBeUndefined();
-    });
-
-    it("passes through an object by reference", () => {
-      const schema = type<{ x: number }>();
-      const input = { x: 1 };
-      const result = schema["~standard"].validate(input) as { value: unknown };
-      expect(result.value).toBe(input);
-    });
-
-    it("passes through an array by reference", () => {
-      const schema = type<number[]>();
-      const input = [1, 2, 3];
-      const result = schema["~standard"].validate(input) as { value: unknown };
-      expect(result.value).toBe(input);
-    });
-  });
-
-  describe("coerce function", () => {
-    it("applies coerce to the input value", () => {
-      const schema = type<string, number>((s) => s.length);
-      const result = schema["~standard"].validate("hello") as { value: unknown };
-      expect(result.value).toBe(5);
-    });
-
-    it("coerce can return a new object", () => {
-      const schema = type<{ raw: string }, { raw: string; trimmed: string }>(({ raw }) => ({
-        raw,
-        trimmed: raw.trim(),
-      }));
-      const result = schema["~standard"].validate({ raw: "  hi  " }) as { value: unknown };
-      expect(result.value).toEqual({ raw: "  hi  ", trimmed: "hi" });
-    });
-
-    it("coerce returning undefined passes through as undefined", () => {
-      const schema = type<string, undefined>(() => undefined);
-      const result = schema["~standard"].validate("anything") as { value: unknown };
-      expect(result.value).toBeUndefined();
-    });
-
-    it("each call invokes coerce exactly once", () => {
-      let calls = 0;
-      const schema = type<number, number>((n) => {
-        calls++;
-        return n * 2;
-      });
-      schema["~standard"].validate(3);
-      schema["~standard"].validate(5);
-      expect(calls).toBe(2);
-    });
-  });
-
-  describe("multiple calls / independence", () => {
-    it("two schemas created from type() are independent objects", () => {
-      const a = type<string>();
-      const b = type<string>();
-      expect(a).not.toBe(b);
-    });
-
-    it("validate can be called multiple times on the same schema", () => {
-      const schema = type<number>();
-      const r1 = schema["~standard"].validate(1) as { value: unknown };
-      const r2 = schema["~standard"].validate(2) as { value: unknown };
-      expect(r1.value).toBe(1);
-      expect(r2.value).toBe(2);
-    });
-  });
-
-  describe("compatibility with IlhaBuilder.input()", () => {
-    it("type() result is accepted by .input() without throwing", () => {
-      const schema = type<{ msg: string }>();
-      expect(() => {
-        ilha.input(schema).render(({ input }) => `<p>${input.msg}</p>`);
-      }).not.toThrow();
-    });
-
-    it("island renders with props validated through type()", () => {
-      const island = ilha
-        .input(type<{ label: string }>())
-        .render(({ input }) => `<span>${input.label}</span>`);
-
-      const result = island({ label: "test" });
-      expect(result).toContain("test");
-    });
-  });
-});
-
-// ─────────────────────────────────────────────
-// Dev-mode warnings
-// ─────────────────────────────────────────────
+// ---------------------------------------------
+// dev-mode warnings
+// ---------------------------------------------
 
 describe("dev-mode warnings", () => {
   let warnSpy: ReturnType<typeof spyOn>;

@@ -1,8 +1,8 @@
 import { signal, effect, setActiveSub } from "alien-signals";
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Standard Schema V1 (inlined, type-only)
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 interface StandardSchemaV1<Input = unknown, Output = Input> {
   readonly "~standard": StandardSchemaV1.Props<Input, Output>;
@@ -39,9 +39,9 @@ declare namespace StandardSchemaV1 {
   >["output"];
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Dev-mode warning helper
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 const __DEV__ = typeof process !== "undefined" ? process.env?.["NODE_ENV"] !== "production" : true;
 
@@ -49,12 +49,9 @@ function warn(msg: string): void {
   if (__DEV__) console.warn(`[ilha] ${msg}`);
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Simplified morph engine
-// ─────────────────────────────────────────────
-// Islands produce full HTML each render — we only need a simple
-// pairwise child-walk that patches text, attributes, and structure.
-// No id-mapping, LIS, or soft-matching needed.
+// ---------------------------------------------
 
 function syncAttributes(from: Element, to: Element): void {
   for (const { name, value } of to.attributes) {
@@ -69,7 +66,6 @@ function morphChildren(fromParent: Element, toParent: Element): void {
   const fromNodes = Array.from(fromParent.childNodes);
   const toNodes = Array.from(toParent.childNodes);
 
-  // Remove excess children from the end
   for (let i = fromNodes.length - 1; i >= toNodes.length; i--) {
     fromNodes[i]!.remove();
   }
@@ -79,7 +75,6 @@ function morphChildren(fromParent: Element, toParent: Element): void {
     const fromNode = fromNodes[i];
 
     if (!fromNode) {
-      // New node — append
       fromParent.appendChild(toNode.cloneNode(true));
       continue;
     }
@@ -89,7 +84,6 @@ function morphChildren(fromParent: Element, toParent: Element): void {
       continue;
     }
 
-    // Text / comment nodes
     if (fromNode.nodeType === 3 || fromNode.nodeType === 8) {
       if (fromNode.nodeValue !== toNode.nodeValue) {
         fromNode.nodeValue = toNode.nodeValue;
@@ -97,7 +91,6 @@ function morphChildren(fromParent: Element, toParent: Element): void {
       continue;
     }
 
-    // Element nodes
     if (fromNode.nodeType === 1) {
       const fromEl = fromNode as Element;
       const toEl = toNode as Element;
@@ -107,7 +100,6 @@ function morphChildren(fromParent: Element, toParent: Element): void {
         continue;
       }
 
-      // Special case: input type change
       if (
         fromEl.localName === "input" &&
         (fromEl as HTMLInputElement).type !== (toEl as HTMLInputElement).type
@@ -135,9 +127,9 @@ function morphInner(from: Element, to: Element): void {
   morphChildren(from, to);
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Internal helpers
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 function validateSchema<S extends StandardSchemaV1>(
   schema: S,
@@ -164,7 +156,6 @@ function escapeHtml(value: unknown): string {
 }
 
 function dedentString(str: string): string {
-  // Fast path: no leading newline means no indent to strip
   if (str.length === 0 || str[0] !== "\n") return str;
   const lines = str.split("\n");
   while (lines.length && lines[0]!.trim() === "") lines.shift();
@@ -176,9 +167,9 @@ function dedentString(str: string): string {
   return lines.map((l) => l.slice(indent)).join("\n");
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Symbols & constants
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 const RAW = Symbol("ilha.raw");
 const SLOT_ACCESSOR = Symbol("ilha.slotAccessor");
@@ -193,9 +184,9 @@ interface RawHtml {
   value: string;
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Slot accessor
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 export interface SlotAccessor {
   (props?: Record<string, unknown>): RawHtml;
@@ -214,9 +205,9 @@ function isSlotAccessor(v: unknown): v is SlotAccessor {
   return typeof v === "function" && SLOT_ACCESSOR in (v as object);
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Signal accessor
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 interface MarkedSignalAccessor<T> {
   (): T;
@@ -233,14 +224,18 @@ function isSignalAccessor(v: unknown): v is MarkedSignalAccessor<unknown> {
   return typeof v === "function" && SIGNAL_ACCESSOR in (v as object);
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Public helpers
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 function ilhaRaw(value: string): RawHtml {
   return { [RAW]: true, value };
 }
 
+// Resolves any interpolated value to an HTML string.
+// Arrays are joined with "" — each item is recursively resolved.
+// This means string[] is escaped per-item, RawHtml[] is passed through raw,
+// and mixed arrays work correctly. No comma-joining ever occurs.
 function interpolateValue(v: unknown): string {
   if (v == null) return "";
   if (Array.isArray(v)) return v.map(interpolateValue).join("");
@@ -251,18 +246,26 @@ function interpolateValue(v: unknown): string {
   return escapeHtml(v);
 }
 
-function ilhaHtml(strings: TemplateStringsArray, ...values: unknown[]): string {
+// html`` now returns RawHtml instead of string so that arrays of html`` results
+// (e.g. from .map()) can be passed directly as interpolated values in a parent
+// html`` without triggering JS's default Array.toString() comma-joining.
+function ilhaHtml(strings: TemplateStringsArray, ...values: unknown[]): RawHtml {
   let result = "";
   for (let i = 0; i < strings.length; i++) {
     result += strings[i];
     if (i < values.length) result += interpolateValue(values[i]);
   }
-  return dedentString(result);
+  return { [RAW]: true, value: dedentString(result) };
 }
 
-// ─────────────────────────────────────────────
+// Unwrap a RawHtml or plain string to a string — used at render boundaries.
+function unwrapHtml(v: string | RawHtml): string {
+  return typeof v === "object" && RAW in v ? v.value : v;
+}
+
+// ---------------------------------------------
 // Context registry
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 type ContextSignal<T> = { (): T; (value: T): void };
 const contextRegistry = new Map<string, ContextSignal<unknown>>();
@@ -278,9 +281,9 @@ function ilhaContext<T>(key: string, initial: T): ContextSignal<T> {
   return accessor as ContextSignal<T>;
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Derived
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 export interface DerivedValue<T> {
   loading: boolean;
@@ -330,7 +333,6 @@ function buildDerivedSignals<
     envelopes.set(entry.key, env);
     let ac = new AbortController();
 
-    // If we have a snapshot for this key, skip the first computation
     let skipFirst = derivedSnapshot != null && entry.key in derivedSnapshot;
 
     const stopEffect = effect(() => {
@@ -388,9 +390,9 @@ function buildDerivedSignals<
   return { proxy, stop: () => stops.forEach((s) => s()) };
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Bind
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 type ExternalSignal<T = unknown> = { (): T; (value: T): void };
 
@@ -499,9 +501,9 @@ function applyBindings<TStateMap extends Record<string, unknown>>(
   return () => cleanups.forEach((c) => c());
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Core types
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 export type SignalAccessor<T> = MarkedSignalAccessor<T>;
 
@@ -513,9 +515,9 @@ export type IslandState<TStateMap extends Record<string, unknown>> = {
   readonly [K in keyof TStateMap]-?: SignalAccessor<TStateMap[K]>;
 };
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Hydratable options
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 export interface HydratableOptions {
   name: string;
@@ -524,9 +526,9 @@ export interface HydratableOptions {
   skipOnMount?: boolean;
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Island interface
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 export interface Island<
   TInput = Record<string, unknown>,
@@ -583,9 +585,9 @@ export type HandlerContext<TInput, TStateMap extends Record<string, unknown>> = 
   event: Event;
 };
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // .on() event autocomplete types
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 type HTMLEventName = keyof HTMLElementEventMap & string;
 type Modifier = "once" | "capture" | "passive";
@@ -615,9 +617,9 @@ export type HandlerContextFor<
   event: TEventName extends keyof HTMLElementEventMap ? HTMLElementEventMap[TEventName] : Event;
 };
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // State init type
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 type StateInit<TInput, V> = V | ((input: TInput) => V);
 
@@ -626,9 +628,9 @@ interface StateEntry<TInput> {
   init: StateInit<TInput, unknown>;
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Event modifier parsing
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 interface ParsedOn {
   selector: string;
@@ -687,9 +689,9 @@ export interface MountResult {
   unmount: () => void;
 }
 
-// ─────────────────────────────────────────────
-// Builder config (single object instead of 9 positional params)
-// ─────────────────────────────────────────────
+// ---------------------------------------------
+// Builder config
+// ---------------------------------------------
 
 interface BuilderConfig<
   TInput,
@@ -708,15 +710,15 @@ interface BuilderConfig<
   binds: BindEntry<TStateMap>[];
 }
 
-// ─────────────────────────────────────────────
-// Dev-mode: track mounted hosts to warn on double-mount
-// ─────────────────────────────────────────────
+// ---------------------------------------------
+// Dev-mode: track mounted hosts
+// ---------------------------------------------
 
 const _mountedHosts = __DEV__ ? new WeakSet<Element>() : null;
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Builder
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 class IlhaBuilder<
   TInput extends Record<string, unknown>,
@@ -851,7 +853,7 @@ class IlhaBuilder<
   }
 
   render(
-    fn: (ctx: RenderContext<TInput, TStateMap, TDerivedMap, TSlots>) => string,
+    fn: (ctx: RenderContext<TInput, TStateMap, TDerivedMap, TSlots>) => string | RawHtml,
   ): Island<TInput, TStateMap> {
     const {
       schema,
@@ -931,7 +933,6 @@ class IlhaBuilder<
       return state as IslandState<TStateMap>;
     }
 
-    // Unified render-to-string: sync=true forces sync-only (async derived → loading:true)
     function renderToString(props?: Partial<TInput>, sync = false): string | Promise<string> {
       const input = resolveInput(props);
       const state = buildPlainState(input);
@@ -963,7 +964,9 @@ class IlhaBuilder<
             derived[r.key] = { loading: false, value: r.result as unknown, error: undefined };
           }
         }
-        return fn({ state, derived: derived as IslandDerived<TDerivedMap>, input, slots });
+        return unwrapHtml(
+          fn({ state, derived: derived as IslandDerived<TDerivedMap>, input, slots }),
+        );
       }
 
       return Promise.all(
@@ -991,12 +994,13 @@ class IlhaBuilder<
       ).then((resolved) => {
         const derived: Record<string, DerivedValue<unknown>> = {};
         for (const r of resolved) derived[r.key] = r.envelope;
-        return fn({ state, derived: derived as IslandDerived<TDerivedMap>, input, slots });
+        return unwrapHtml(
+          fn({ state, derived: derived as IslandDerived<TDerivedMap>, input, slots }),
+        );
       });
     }
 
     function mountIsland(host: Element, props?: Partial<TInput>): () => void {
-      // Dev-mode: refuse double-mount
       if (__DEV__ && _mountedHosts) {
         if (_mountedHosts.has(host)) {
           warn(
@@ -1042,7 +1046,6 @@ class IlhaBuilder<
         | Record<string, DerivedValue<unknown>>
         | undefined;
 
-      // Rehydrate: server serialises error.message as a string, restore to Error
       let derivedSnapshot: Record<string, DerivedValue<unknown>> | undefined;
       if (derivedSnapshotRaw) {
         derivedSnapshot = {};
@@ -1161,7 +1164,7 @@ class IlhaBuilder<
 
       const slots = makeSlotsProxy(false, host);
 
-      host.innerHTML = fn({ state, derived, input, slots });
+      host.innerHTML = unwrapHtml(fn({ state, derived, input, slots }));
       attachListeners();
 
       let stopBindings = applyBindings(host, binds as BindEntry<TStateMap>[], state);
@@ -1170,7 +1173,6 @@ class IlhaBuilder<
       mountSlots();
       cleanups.push(() => slotCleanups.forEach((unmount) => unmount()));
 
-      // Run onMount callbacks unless snapshot says to skip
       if (!shouldSkipOnMount) {
         for (const entry of onMounts) {
           const prevSub = setActiveSub(undefined);
@@ -1186,7 +1188,7 @@ class IlhaBuilder<
 
       let initialized = false;
       const stopRender = effect(() => {
-        const html = fn({ state, derived, input, slots });
+        const html = unwrapHtml(fn({ state, derived, input, slots }));
         if (!initialized) {
           initialized = true;
           return;
@@ -1221,7 +1223,6 @@ class IlhaBuilder<
         });
       }
 
-      // Idempotent unmount
       let tornDown = false;
       return () => {
         if (tornDown) return;
@@ -1312,9 +1313,9 @@ class IlhaBuilder<
   }
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // ilha.from
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 function ilhaFrom<TInput, TStateMap extends Record<string, unknown>>(
   selector: string | Element,
@@ -1329,9 +1330,9 @@ function ilhaFrom<TInput, TStateMap extends Record<string, unknown>>(
   return island.mount(host, props);
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // ilha.mount — auto-discovery
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 type IslandRegistry = Record<string, AnyIsland>;
 
@@ -1392,9 +1393,9 @@ function mountAll(registry: IslandRegistry, options: MountOptions = {}): MountRe
   return { unmount: () => unmounts.forEach((u) => u()) };
 }
 
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 // Default export
-// ─────────────────────────────────────────────
+// ---------------------------------------------
 
 const EMPTY_CFG: BuilderConfig<
   Record<string, unknown>,
