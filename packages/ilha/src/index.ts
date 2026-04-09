@@ -1165,7 +1165,13 @@ class IlhaBuilder<
 
       const slots = makeSlotsProxy(false, host);
 
-      host.innerHTML = unwrapHtml(fn({ state, derived, input, slots }));
+      // Skip initial render if hydrating and content already exists from SSR.
+      // The effect will handle future updates; we just need to attach listeners
+      // to the existing SSR content.
+      const hasExistingContent = hydrated && host.childNodes.length > 0;
+      if (!hasExistingContent) {
+        host.innerHTML = unwrapHtml(fn({ state, derived, input, slots }));
+      }
       attachListeners();
 
       let stopBindings = applyBindings(host, binds as BindEntry<TStateMap>[], state);
