@@ -280,14 +280,16 @@ describe("codegen — generated file", () => {
     expect([...userLine!.matchAll(/wrapLayout/g)]).toHaveLength(2);
   });
 
-  it("generates export default pageRouter", async () => {
-    await writePage(pagesDir, "index.ts", `export default null;`);
-    expect(await runCodegen()).toContain("export default pageRouter");
-  });
+  // ↓ REMOVED: "generates export default pageRouter" — no longer emitted
 
   it("generates export const pageRouter", async () => {
     await writePage(pagesDir, "index.ts", `export default null;`);
     expect(await runCodegen()).toContain("export const pageRouter");
+  });
+
+  it("does not generate export default", async () => {
+    await writePage(pagesDir, "index.ts", `export default null;`);
+    expect(await runCodegen()).not.toContain("export default");
   });
 
   it("empty pages dir generates an empty router", async () => {
@@ -379,7 +381,6 @@ describe("codegen — registry", () => {
       code.indexOf("export const registry"),
       code.indexOf("};", code.indexOf("export const registry")) + 2,
     );
-    // registry values should be _pageN, not wrapLayout(...)
     expect(regBlock).not.toContain("wrapLayout");
     expect(regBlock).toMatch(/"index":\s*_page\d/);
   });
@@ -395,7 +396,6 @@ describe("codegen — registry", () => {
   it("empty pages dir generates an empty registry object", async () => {
     const code = await runCodegen();
     expect(code).toContain("export const registry");
-    // {} with nothing inside (allowing whitespace/newlines)
     expect(code).toMatch(/export const registry[^=]+=\s*\{[\s]*\}/);
   });
 });
@@ -433,18 +433,9 @@ describe("codegen — registry name collision", () => {
   }
 
   it("warns on registry name collision", async () => {
-    // [id].ts → "id", [slug].ts → "slug" but e.g. user/[id] and post/[id] both → "user-id" / "post-id" (no collision)
-    // force a collision: two patterns that produce same name
-    // /[org]/[repo] → "org-repo", hard to collide naturally — use /:a and /a/:b won't collide
-    // easiest: two files that differ only in param name produce same slugified name
-    // /[id].ts → "id"  and  /[:id] is impossible — use subfolder trick
-    // Actually patternToName strips : so /:foo → "foo" and /:bar → "bar" — different
-    // The realistic collision: user.ts (/user → "user") + user/index.ts (/user → "user") — also a pattern dup
-    // Just assert the warning fires for the duplicate-pattern case (same name = same pattern slug)
     await writePage(pagesDir, "user.ts", `export default null;`);
     await writePage(pagesDir, "user/index.ts", `export default null;`);
     await runCodegen();
-    // either a pattern dup or name collision warning should be present
     expect(warnings.some((w) => w.includes("Duplicate") || w.includes("collision"))).toBe(true);
   });
 
@@ -683,9 +674,9 @@ describe("codegen — relative imports", () => {
     await writePage(pagesDir, "index.ts", `export default null;`);
     const importLines = (await runCodegen())
       .split("\n")
-      .filter((l) => l.startsWith("import _page"));
+      .filter((l) => l.includes("_page") && l.startsWith("import"));
     expect(importLines.length).toBeGreaterThan(0);
-    for (const line of importLines) expect(line).toMatch(/from ["'](\.\.?\/)/);
+    for (const line of importLines) expect(line).toMatch(/from ["']\.\.?\//);
   });
 
   it("layout imports start with ./ or ../", async () => {
@@ -693,18 +684,23 @@ describe("codegen — relative imports", () => {
     await writePage(pagesDir, "+layout.ts", `export default null;`);
     const importLines = (await runCodegen())
       .split("\n")
-      .filter((l) => l.startsWith("import _layout"));
+      .filter((l) => l.includes("_layout") && l.startsWith("import"));
     expect(importLines.length).toBeGreaterThan(0);
-    for (const line of importLines) expect(line).toMatch(/from ["'](\.\.?\/)/);
+    for (const line of importLines) expect(line).toMatch(/from ["']\.\.?\//);
   });
 
   it("no import contains an absolute path", async () => {
     await writePage(pagesDir, "index.ts", `export default null;`);
     await writePage(pagesDir, "+layout.ts", `export default null;`);
     await writePage(pagesDir, "+error.ts", `export default null;`);
+    // check all dynamic imports (page, layout, error) — they all contain their alias name
     const bad = (await runCodegen())
       .split("\n")
-      .filter((l) => l.startsWith("import _"))
+      .filter(
+        (l) =>
+          l.startsWith("import") &&
+          (l.includes("_page") || l.includes("_layout") || l.includes("_error")),
+      )
       .filter((l) => !l.includes(`"./`) && !l.includes(`"../`));
     expect(bad).toHaveLength(0);
   });
@@ -730,7 +726,7 @@ describe("pages() Vite plugin", () => {
     expect(plugin.resolveId("some-other-module")).toBeUndefined();
   });
 
-  it("load() for ilha:pages re-exports pageRouter from generated file", async () => {
+  it("load() for ilha:pages re-exports pageRouter as named export", async () => {
     const root = await makeDir("vite-pages");
     const pagesDir = join(root, "src/pages");
     const outFile = join(root, ".ilha/routes.ts");
@@ -743,11 +739,13 @@ describe("pages() Vite plugin", () => {
     expect(result).toContain("routes.ts");
     expect(result).toContain("pageRouter");
     expect(result).toContain("export");
+    // must NOT re-export default — named exports only
+    expect(result).not.toContain("export default");
 
     await removeDir(root);
   });
 
-  it("load() for ilha:registry re-exports registry from the same generated file", async () => {
+  it("load() for ilha:registry re-exports registry as named export", async () => {
     const root = await makeDir("vite-registry");
     const pagesDir = join(root, "src/pages");
     const outFile = join(root, ".ilha/routes.ts");
@@ -760,6 +758,7 @@ describe("pages() Vite plugin", () => {
     expect(result).toContain("routes.ts");
     expect(result).toContain("registry");
     expect(result).toContain("export");
+    expect(result).not.toContain("export default");
 
     await removeDir(root);
   });
@@ -776,7 +775,6 @@ describe("pages() Vite plugin", () => {
     const pagesResult = plugin.load("\0ilha:pages");
     const registryResult = plugin.load("\0ilha:registry");
 
-    // both should reference the exact same file path
     const fileRef = (s: string) => s.match(/from ["'](.+?)["']/)?.[1];
     expect(fileRef(pagesResult)).toBe(fileRef(registryResult));
 

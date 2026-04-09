@@ -56,11 +56,11 @@ export function wrapError(handler: ErrorHandler, page: Island<any, any>): Island
 // ─────────────────────────────────────────────
 
 interface PageEntry {
-  file: string; // absolute path to page file
-  pattern: string; // rou3 pattern e.g. /user/:id
-  name: string; // registry key e.g. "user-id"
-  layouts: string[]; // absolute paths, root → nearest
-  errors: string[]; // absolute paths, root → nearest
+  file: string;
+  pattern: string;
+  name: string;
+  layouts: string[];
+  errors: string[];
 }
 
 // ─────────────────────────────────────────────
@@ -83,7 +83,6 @@ function fileToPattern(pagesDir: string, file: string): string {
 
 // ─────────────────────────────────────────────
 // Codegen — pattern → registry name
-// "/" → "index", "/user/:id" → "user-id", "/docs/**:slug" → "docs-slug"
 // ─────────────────────────────────────────────
 
 function patternToName(pattern: string): string {
@@ -91,7 +90,7 @@ function patternToName(pattern: string): string {
   return (
     pattern
       .replace(/^\//, "")
-      .replace(/\*\*:[^/]*/g, (m) => (m.length > 3 ? m.slice(3) : "wildcard")) // **:slug → slug, **: → wildcard
+      .replace(/\*\*:[^/]*/g, (m) => (m.length > 3 ? m.slice(3) : "wildcard"))
       .replace(/:/g, "")
       .replace(/\*\*/g, "wildcard")
       .replace(/\//g, "-")
@@ -101,7 +100,6 @@ function patternToName(pattern: string): string {
 
 // ─────────────────────────────────────────────
 // Codegen — specificity score for route sorting
-// static > :param > wildcard
 // ─────────────────────────────────────────────
 
 function specificityScore(pattern: string): number {
@@ -224,13 +222,13 @@ async function generate(pagesDir: string, outFile: string): Promise<void> {
 
   for (const [i, entry] of entries.entries()) {
     const pageId = `_page${i}`;
-    imports.push(`import ${pageId} from ${JSON.stringify(rel(entry.file))};`);
+    imports.push(`import { default as ${pageId} } from ${JSON.stringify(rel(entry.file))};`);
 
     for (const [j, l] of entry.layouts.entries())
-      imports.push(`import _layout${i}_${j} from ${JSON.stringify(rel(l))};`);
+      imports.push(`import { default as _layout${i}_${j} } from ${JSON.stringify(rel(l))};`);
 
     for (const [j, e] of entry.errors.entries())
-      imports.push(`import _error${i}_${j} from ${JSON.stringify(rel(e))};`);
+      imports.push(`import { default as _error${i}_${j} } from ${JSON.stringify(rel(e))};`);
 
     let expr = pageId;
     for (let j = entry.errors.length - 1; j >= 0; j--) expr = `wrapError(_error${i}_${j}, ${expr})`;
@@ -255,8 +253,6 @@ async function generate(pagesDir: string, outFile: string): Promise<void> {
     `export const pageRouter = router()`,
     ...routeLines,
     `  ;`,
-    ``,
-    `export default pageRouter;`,
   ].join("\n");
 
   await mkdir(dirname(outFile), { recursive: true });
@@ -328,8 +324,7 @@ export function pages(options: IlhaPagesOptions = {}): Plugin {
     },
 
     load(id) {
-      if (id === RESOLVED_PAGES)
-        return `export { pageRouter, default } from ${JSON.stringify(outFile)};`;
+      if (id === RESOLVED_PAGES) return `export { pageRouter } from ${JSON.stringify(outFile)};`;
       if (id === RESOLVED_REGISTRY) return `export { registry } from ${JSON.stringify(outFile)};`;
     },
   };

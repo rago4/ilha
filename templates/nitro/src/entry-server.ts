@@ -1,4 +1,5 @@
 import pageRouter from "ilha:pages";
+import registry from "ilha:registry";
 
 import clientAssets from "./entry-client.ts?assets=client";
 
@@ -6,7 +7,7 @@ async function handler(request: Request): Promise<Response> {
   const url = new URL(request.url);
   const href = url.href.slice(url.origin.length);
 
-  const body = pageRouter.render(href);
+  const body = await pageRouter.renderHydratable(href, registry);
 
   return new Response(htmlTemplate(body, clientAssets.entry), {
     headers: { "content-type": "text/html;charset=utf-8" },
