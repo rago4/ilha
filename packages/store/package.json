@@ -1,0 +1,33 @@
+{
+  "name": "@ilha/store",
+  "version": "0.0.1",
+  "description": "Typed store.",
+  "license": "MIT",
+  "author": "Ryuz <ryuzer@proton.me>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ilhajs/ilha.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc && tsdown",
+    "test": "bun test",
+    "cleanup": "rimraf dist node_modules"
+  },
+  "dependencies": {
+    "alien-signals": "^3.1.2",
+    "ilha": "workspace:*"
+  },
+  "devDependencies": {
+    "zod": "^4.3.6"
+  }
+}

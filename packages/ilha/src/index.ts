@@ -179,7 +179,7 @@ const SLOT_ATTR = "data-ilha-slot";
 const PROPS_ATTR = "data-ilha-props";
 const STATE_ATTR = "data-ilha-state";
 
-interface RawHtml {
+export interface RawHtml {
   [RAW]: true;
   value: string;
 }
