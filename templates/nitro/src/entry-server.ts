@@ -1,0 +1,31 @@
+import pageRouter from "ilha:pages";
+
+import clientAssets from "./entry-client.ts?assets=client";
+
+async function handler(request: Request): Promise<Response> {
+  const url = new URL(request.url);
+  const href = url.href.slice(url.origin.length);
+
+  const body = pageRouter.render(href);
+
+  return new Response(htmlTemplate(body, clientAssets.entry), {
+    headers: { "content-type": "text/html;charset=utf-8" },
+  });
+}
+
+function htmlTemplate(body: string, clientEntry: string): string {
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ilha App</title>
+</head>
+<body>
+  <div id="app">${body}</div>
+  <script type="module" src="${clientEntry}"></script>
+</body>
+</html>`;
+}
+
+export default { fetch: handler };

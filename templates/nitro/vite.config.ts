@@ -8,4 +8,16 @@ export default defineConfig({
   nitro: {
     serverDir: "./src",
   },
+  environments: {
+    client: {
+      build: {
+        rollupOptions: { input: "./src/entry-client.ts" },
+      },
+    },
+    ssr: {
+      build: {
+        rollupOptions: { input: "./src/entry-server.ts" },
+      },
+    },
+  },
 });

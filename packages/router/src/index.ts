@@ -1,5 +1,5 @@
 import { context } from "ilha";
-import type { Island } from "ilha";
+import type { Island, HydratableOptions } from "ilha";
 import ilha, { html } from "ilha";
 import { createRouter, addRoute, findRoute } from "rou3";
 
@@ -22,12 +22,24 @@ export interface NavigateOptions {
   replace?: boolean;
 }
 
+export interface HydratableRenderOptions extends Partial<Omit<HydratableOptions, "name">> {}
+
 export interface RouterBuilder {
   route(pattern: string, island: Island<any, any>): RouterBuilder;
   /** Client-side: mount into a DOM element or selector, returns unmount fn */
   mount(target: string | Element): () => void;
   /** Server-side: resolve a URL to an HTML string */
   render(url: string | URL): string;
+  /**
+   * Server-side: resolve a URL and render with hydration markers.
+   * Requires an island registry (name → island) shared with the client.
+   * Use with ilha.mount(registry) on the client for zero-flash hydration.
+   */
+  renderHydratable(
+    url: string | URL,
+    registry: Record<string, Island<any, any>>,
+    options?: HydratableRenderOptions,
+  ): Promise<string>;
 }
 
 // ─────────────────────────────────────────────
@@ -69,7 +81,6 @@ function syncRouteFromURL(url: string | URL): void {
   const match = findRoute(_rou3, "GET", path);
   const island = match?.data ?? null;
 
-  // rou3 returns decoded param values already; re-decode just in case
   const params: Record<string, string> = {};
   for (const [k, v] of Object.entries(match?.params ?? {})) {
     params[k] = decodeURIComponent(v as string);
@@ -185,7 +196,7 @@ export function router(): RouterBuilder {
     mount(target: string | Element): () => void {
       if (!isBrowser) {
         console.warn(
-          "[ilha-router] mount() called in a non-browser environment — use render() for SSR",
+          "[ilha-router] mount() called in a non-browser environment — use render() or renderHydratable() for SSR",
         );
         return () => {};
       }
@@ -202,7 +213,6 @@ export function router(): RouterBuilder {
       const popHandler = () => syncRoute();
       window.addEventListener("popstate", popHandler);
       _popstateCleanup = () => window.removeEventListener("popstate", popHandler);
-
       _linkCleanup = enableLinkInterception(document);
 
       const unmountView = RouterView.mount(host);
@@ -216,10 +226,46 @@ export function router(): RouterBuilder {
       };
     },
 
-    // ── Server-side ───────────────────────────
+    // ── Server-side — plain SSR ───────────────
     render(url: string | URL): string {
       syncRouteFromURL(url);
       return RouterView.toString();
+    },
+
+    // ── Server-side — hydratable SSR ─────────
+    async renderHydratable(
+      url: string | URL,
+      registry: Record<string, Island<any, any>>,
+      options: HydratableRenderOptions = {},
+    ): Promise<string> {
+      syncRouteFromURL(url);
+
+      const island = activeIsland();
+
+      if (!island) return `<div data-router-empty></div>`;
+
+      const name = Object.entries(registry).find(([, v]) => v === island)?.[0];
+
+      if (!name) {
+        // island not registered — fall back to plain SSR, no hydration
+        console.warn(
+          `[ilha-router] renderHydratable: active island for "${routePath()}" is not in the registry. ` +
+            `Falling back to plain SSR — the island will not be interactive on the client.`,
+        );
+        return `<div data-router-view>${island.toString()}</div>`;
+      }
+
+      const html = await island.hydratable(
+        {},
+        {
+          name,
+          as: "div",
+          snapshot: true,
+          ...options,
+        },
+      );
+
+      return `<div data-router-view>${html}</div>`;
     },
   };
 

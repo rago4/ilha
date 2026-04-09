@@ -53,6 +53,14 @@ const userPage = ilha.render(() => {
 });
 const notFound = ilha.render(() => `<p>404</p>`);
 
+// shared registry used across hydratable tests
+const registry: Record<string, typeof homePage> = {
+  home: homePage,
+  about: aboutPage,
+  user: userPage,
+  notFound: notFound,
+};
+
 // ─────────────────────────────────────────────
 // route matching
 // ─────────────────────────────────────────────
@@ -612,5 +620,122 @@ describe("SSR render()", () => {
     expect(path()).toBe("/user/99");
     expect(params()).toEqual({ id: "99" });
     expect(search()).toBe("?sort=asc");
+  });
+});
+
+// ─────────────────────────────────────────────
+// SSR — router().renderHydratable()
+// ─────────────────────────────────────────────
+
+describe("SSR renderHydratable()", () => {
+  it("returns a string (is async)", async () => {
+    const html = await router()
+      .route("/", homePage)
+      .route("/**", notFound)
+      .renderHydratable("/", registry);
+    expect(typeof html).toBe("string");
+  });
+
+  it("wraps output in data-router-view", async () => {
+    const html = await router().route("/", homePage).renderHydratable("/", registry);
+    expect(html).toContain("data-router-view");
+  });
+
+  it("includes data-ilha attribute with the island name", async () => {
+    const html = await router().route("/", homePage).renderHydratable("/", registry);
+    expect(html).toContain(`data-ilha="home"`);
+  });
+
+  it("includes island content in the output", async () => {
+    const html = await router().route("/", homePage).renderHydratable("/", registry);
+    expect(html).toContain("home");
+  });
+
+  it("resolves correct island for /about", async () => {
+    const html = await router()
+      .route("/", homePage)
+      .route("/about", aboutPage)
+      .route("/**", notFound)
+      .renderHydratable("/about", registry);
+    expect(html).toContain(`data-ilha="about"`);
+    expect(html).toContain("about");
+    expect(html).not.toContain(`data-ilha="home"`);
+  });
+
+  it("renders data-router-empty when no route matches", async () => {
+    const html = await router().route("/", homePage).renderHydratable("/unknown", registry);
+    expect(html).toContain("data-router-empty");
+    expect(html).not.toContain("data-ilha");
+  });
+
+  it("populates route signals identically to render()", async () => {
+    await router().route("/user/:id", userPage).renderHydratable("/user/42", registry);
+    expect(routePath()).toBe("/user/42");
+    expect(routeParams()).toEqual({ id: "42" });
+  });
+
+  it("populates routeSearch signal", async () => {
+    await router().route("/about", aboutPage).renderHydratable("/about?tab=docs", registry);
+    expect(routeSearch()).toBe("?tab=docs");
+  });
+
+  it("accepts a full URL string", async () => {
+    const html = await router()
+      .route("/about", aboutPage)
+      .renderHydratable("http://example.com/about", registry);
+    expect(html).toContain(`data-ilha="about"`);
+  });
+
+  it("accepts a URL object", async () => {
+    const html = await router()
+      .route("/about", aboutPage)
+      .renderHydratable(new URL("http://example.com/about"), registry);
+    expect(html).toContain(`data-ilha="about"`);
+  });
+
+  it("falls back to plain SSR and warns when island is not in registry", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const unregistered = ilha.render(() => `<p>unregistered</p>`);
+    const html = await router().route("/", unregistered).renderHydratable("/", registry);
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("[ilha-router]"));
+    expect(html).toContain("data-router-view");
+    expect(html).toContain("unregistered");
+    expect(html).not.toContain("data-ilha");
+    warn.mockRestore();
+  });
+
+  it("does not include data-ilha when falling back to plain SSR", async () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    const unregistered = ilha.render(() => `<p>x</p>`);
+    const html = await router().route("/", unregistered).renderHydratable("/", {});
+    expect(html).not.toContain("data-ilha");
+    warn.mockRestore();
+  });
+
+  it("snapshot option is forwarded — data-ilha-state present", async () => {
+    const stateful = ilha.state("count", 0).render(() => `<p>count</p>`);
+    const reg = { stateful };
+    const html = await router().route("/", stateful).renderHydratable("/", reg, { snapshot: true });
+    expect(html).toContain("data-ilha-state");
+  });
+
+  it("snapshot: false omits data-ilha-state", async () => {
+    const stateful = ilha.state("count", 0).render(() => `<p>count</p>`);
+    const reg = { stateful };
+    const html = await router()
+      .route("/", stateful)
+      .renderHydratable("/", reg, { snapshot: false });
+    expect(html).not.toContain("data-ilha-state");
+  });
+
+  it("each call is independent — registry lookup uses active island", async () => {
+    const r = router().route("/", homePage).route("/about", aboutPage);
+
+    const h1 = await r.renderHydratable("/", registry);
+    const h2 = await r.renderHydratable("/about", registry);
+
+    expect(h1).toContain(`data-ilha="home"`);
+    expect(h2).toContain(`data-ilha="about"`);
   });
 });
