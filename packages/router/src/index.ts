@@ -61,7 +61,6 @@ export function wrapError(handler: ErrorHandler, page: Island<any, any>): Island
 
   // Preserve the original page's mount behavior for client-side interactivity.
   // We read .mount once and close over it — no repeated mutation.
-  const originalMount = wrapper.mount;
   wrapper.mount = (host: Element, props?: Record<string, unknown>) => {
     try {
       return page.mount(host, props);
