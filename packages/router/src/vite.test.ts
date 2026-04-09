@@ -373,7 +373,7 @@ describe("codegen — registry", () => {
     expect(code).toContain(`"wildcard":`);
   });
 
-  it("registry maps to raw page imports, not wrapped expressions", async () => {
+  it("registry maps to wrapped expressions (same as route) for hydration to work", async () => {
     await writePage(pagesDir, "index.ts", `export default null;`);
     await writePage(pagesDir, "+layout.ts", `export default null;`);
     const code = await runCodegen();
@@ -381,8 +381,9 @@ describe("codegen — registry", () => {
       code.indexOf("export const registry"),
       code.indexOf("};", code.indexOf("export const registry")) + 2,
     );
-    expect(regBlock).not.toContain("wrapLayout");
-    expect(regBlock).toMatch(/"index":\s*_page\d/);
+    // Registry must contain wrapped islands so renderHydratable can find them
+    expect(regBlock).toContain("wrapLayout");
+    expect(regBlock).toMatch(/"index":\s*wrapLayout/);
   });
 
   it("registry appears before pageRouter in the file", async () => {
