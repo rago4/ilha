@@ -9,8 +9,8 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@ilha/router": "https://pkg.pr.new/ilhajs/ilha/@ilha/router@623199b",
-    "ilha": "https://pkg.pr.new/ilhajs/ilha@623199b",
+    "@ilha/router": "https://pkg.pr.new/ilhajs/ilha/@ilha/router@15550db",
+    "ilha": "https://pkg.pr.new/ilhajs/ilha@15550db",
     "nitro": "^3.0.260311-beta"
   },
   "devDependencies": {

@@ -26,6 +26,7 @@ export interface HydratableRenderOptions extends Partial<Omit<HydratableOptions,
 
 export interface RouterBuilder {
   route(pattern: string, island: Island<any, any>): RouterBuilder;
+  prime(): void;
   mount(target: string | Element, options?: { hydrate?: boolean }): () => void;
   render(url: string | URL): string;
   renderHydratable(
@@ -88,6 +89,32 @@ function syncRouteFromURL(url: string | URL): void {
 
 function syncRoute(): void {
   syncRouteFromURL(location.href);
+}
+
+// ─────────────────────────────────────────────
+// Pre-hydration signal priming
+// ─────────────────────────────────────────────
+
+/**
+ * Prime route context signals from the current `location` so that islands
+ * hydrated by `ilha.mount()` see the correct route values on their first
+ * render — preventing a mismatch morph that would destroy hydrated bindings.
+ *
+ * Call this **before** `ilha.mount()` and **after** all routes have been
+ * registered (i.e. after the `router().route(…).route(…)` chain).
+ *
+ * ```ts
+ * import { mount } from "ilha";
+ * import { pageRouter } from "ilha:pages";
+ * import { registry } from "ilha:registry";
+ *
+ * pageRouter.prime();              // ← sync signals first
+ * mount(registry, { root: … });   // ← then hydrate islands
+ * pageRouter.mount("#app", { hydrate: true });
+ * ```
+ */
+export function prime(): void {
+  if (isBrowser) syncRoute();
 }
 
 // ─────────────────────────────────────────────
@@ -185,6 +212,9 @@ export function router(): RouterBuilder {
       return builder;
     },
 
+    // ── Pre-hydration signal priming ───────────────────────────────────────
+    prime,
+
     // ── Client-side ──────────────────────────────────────────────────────────
     mount(target: string | Element, { hydrate = false } = {}): () => void {
       if (!isBrowser) {
@@ -198,6 +228,10 @@ export function router(): RouterBuilder {
         return () => {};
       }
 
+      // Ensure route signals are current.  If prime() was already called this
+      // is a no-op (same values); if not, this syncs now — which is fine for
+      // non-hydrate mounts but may be too late for hydrate mounts if
+      // ilha.mount() already ran (see prime() docs above).
       syncRoute();
 
       const popHandler = () => syncRoute();
@@ -228,6 +262,7 @@ export function router(): RouterBuilder {
             // Schedule RouterView takeover after this render completes.
             queueMicrotask(() => {
               unmountSentinel();
+              sentinelHost.remove();
               unmountView = RouterView.mount(viewHost);
             });
           }
@@ -318,6 +353,7 @@ export default {
   useRoute,
   isActive,
   enableLinkInterception,
+  prime,
   RouterView,
   RouterLink,
 };
