@@ -137,7 +137,17 @@ export function enableLinkInterception(root: Element | Document = document): () 
 // RouterView outlet island
 // ─────────────────────────────────────────────
 
+// When hydrating, the first RouterView render must return the existing DOM
+// content verbatim — otherwise ilha.mount()'s already-hydrated [data-ilha]
+// children get clobbered by a fresh island.toString() without hydration markers.
+let _hydrateSnapshot: string | null = null;
+
 export const RouterView = ilha.render((): string => {
+  if (_hydrateSnapshot !== null) {
+    const snap = _hydrateSnapshot;
+    _hydrateSnapshot = null;
+    return snap;
+  }
   const island = activeIsland();
   if (!island) return `<div data-router-empty></div>`;
   return `<div data-router-view>${island.toString()}</div>`;
@@ -209,12 +219,13 @@ export function router(): RouterBuilder {
 
       if (hydrate) {
         // SSR HTML is already in the DOM — ilha.mount() has already hydrated
-        // [data-ilha] nodes with reactivity. Mount RouterView onto the existing
-        // [data-router-view] wrapper with _skipOnMount so the first effect()
-        // does NOT re-render and clobber the hydrated children.
+        // [data-ilha] nodes with reactivity.  Capture the existing innerHTML
+        // so RouterView's first render returns it verbatim (no-op morph),
+        // preserving the hydrated children.
         const existing = host.querySelector<Element>("[data-router-view]");
         if (existing) {
-          unmountView = RouterView.mount(existing, { _skipOnMount: true });
+          _hydrateSnapshot = existing.innerHTML;
+          unmountView = RouterView.mount(existing);
         } else {
           // no SSR content found — fall back to normal mount
           unmountView = RouterView.mount(host);
