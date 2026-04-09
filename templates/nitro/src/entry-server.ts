@@ -9,7 +9,8 @@ async function handler(request: Request): Promise<Response> {
 
   const body = await pageRouter.renderHydratable(href, registry);
 
-  return new Response(htmlTemplate(body, clientAssets.entry), {
+  const entryPath = clientAssets.entry ?? "/entry-client.js";
+  return new Response(htmlTemplate(body, entryPath), {
     headers: { "content-type": "text/html;charset=utf-8" },
   });
 }

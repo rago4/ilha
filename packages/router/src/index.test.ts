@@ -739,3 +739,212 @@ describe("SSR renderHydratable()", () => {
     expect(h2).toContain(`data-ilha="about"`);
   });
 });
+
+// ─────────────────────────────────────────────
+// SSR → client hydration pipeline
+// ─────────────────────────────────────────────
+
+describe("SSR → client hydration pipeline", () => {
+  let el: Element;
+
+  afterEach(() => {
+    if (el && el.parentNode) cleanup(el);
+  });
+
+  it("hydrate: true — does not wipe SSR innerHTML on mount", async () => {
+    const ssrHtml = await router().route("/", homePage).renderHydratable("/", registry);
+
+    setLocation("/");
+    el = makeEl(ssrHtml);
+
+    const unmount = router().route("/", homePage).mount(el, { hydrate: true });
+    // SSR content must still be present — mount() must not clear the DOM
+    expect(el.innerHTML).toContain("home");
+    expect(el.innerHTML).toContain("data-router-view");
+    unmount();
+  });
+
+  it("hydrate: true — data-ilha attribute is preserved in the DOM", async () => {
+    const ssrHtml = await router().route("/", homePage).renderHydratable("/", registry);
+
+    setLocation("/");
+    el = makeEl(ssrHtml);
+
+    const unmount = router().route("/", homePage).mount(el, { hydrate: true });
+    expect(el.innerHTML).toContain('data-ilha="home"');
+    unmount();
+  });
+
+  it("hydrate: true — sentinel node is hidden and appended", async () => {
+    const ssrHtml = await router().route("/", homePage).renderHydratable("/", registry);
+
+    setLocation("/");
+    el = makeEl(ssrHtml);
+
+    const unmount = router().route("/", homePage).mount(el, { hydrate: true });
+    // Sentinel is a display:none div injected by hydrate mode
+    const sentinel = el.querySelector("div[style*='display: none']");
+    expect(sentinel).not.toBeNull();
+    unmount();
+  });
+
+  it("hydrate: true — sentinel is removed after unmount()", async () => {
+    const ssrHtml = await router().route("/", homePage).renderHydratable("/", registry);
+
+    setLocation("/");
+    el = makeEl(ssrHtml);
+
+    const unmount = router().route("/", homePage).mount(el, { hydrate: true });
+    unmount();
+    const sentinel = el.querySelector("div[style*='display: none']");
+    expect(sentinel).toBeNull();
+  });
+
+  it("hydrate: false — RouterView replaces SSR content on mount", () => {
+    setLocation("/");
+    el = makeEl('<div data-router-view><p id="ssr-content">old</p></div>');
+
+    const unmount = router().route("/", homePage).mount(el, { hydrate: false });
+    // Non-hydrate mount overwrites the host with RouterView output
+    expect(el.textContent).toContain("home");
+    unmount();
+  });
+
+  it("hydrate: true — navigation after hydration renders new page via RouterView", async () => {
+    const ssrHtml = await router()
+      .route("/", homePage)
+      .route("/about", aboutPage)
+      .renderHydratable("/", registry);
+
+    setLocation("/");
+    el = makeEl(ssrHtml);
+
+    const unmount = router()
+      .route("/", homePage)
+      .route("/about", aboutPage)
+      .mount(el, { hydrate: true });
+
+    navigate("/about");
+    await Promise.resolve();
+    await Promise.resolve(); // two microtask ticks for queueMicrotask inside sentinel
+
+    expect(el.textContent).toContain("about");
+    unmount();
+  });
+
+  it("hydrate: true — route signals are correct immediately after mount", async () => {
+    const ssrHtml = await router()
+      .route("/user/:id", userPage)
+      .renderHydratable("/user/77", registry);
+
+    setLocation("/user/77");
+    el = makeEl(ssrHtml);
+
+    const unmount = router().route("/user/:id", userPage).mount(el, { hydrate: true });
+    expect(routePath()).toBe("/user/77");
+    expect(routeParams()).toEqual({ id: "77" });
+    unmount();
+  });
+
+  it("hydrate: true — popstate updates route signals", async () => {
+    const ssrHtml = await router()
+      .route("/", homePage)
+      .route("/about", aboutPage)
+      .renderHydratable("/", registry);
+
+    setLocation("/");
+    el = makeEl(ssrHtml);
+
+    const unmount = router()
+      .route("/", homePage)
+      .route("/about", aboutPage)
+      .mount(el, { hydrate: true });
+
+    setLocation("/about");
+    popstate();
+
+    expect(routePath()).toBe("/about");
+    unmount();
+  });
+
+  it("hydrate: true — unmount() removes popstate listener", async () => {
+    const ssrHtml = await router().route("/", homePage).renderHydratable("/", registry);
+
+    setLocation("/");
+    el = makeEl(ssrHtml);
+
+    const unmount = router()
+      .route("/", homePage)
+      .route("/about", aboutPage)
+      .mount(el, { hydrate: true });
+    unmount();
+
+    setLocation("/about");
+    popstate();
+    // listener removed — routePath must not have advanced to /about
+    expect(routePath()).not.toBe("/about");
+  });
+});
+
+// ─────────────────────────────────────────────
+// SSR full-page HTML template (entry-server shape)
+// ─────────────────────────────────────────────
+
+describe("SSR full-page HTML template", () => {
+  function htmlTemplate(body: string, clientEntry = "/entry-client.js"): string {
+    return `<!doctype html><html><head><title>Ilha App</title></head><body><div id="app">${body}</div><script type="module" src="${clientEntry}"></script></body></html>`;
+  }
+
+  it("wraps renderHydratable output in a full HTML document", async () => {
+    const body = await router().route("/", homePage).renderHydratable("/", registry);
+
+    const full = htmlTemplate(body);
+    expect(full).toContain("<!doctype html>");
+    expect(full).toContain("<title>Ilha App</title>");
+    expect(full).toContain('id="app"');
+    expect(full).toContain("home");
+    expect(full).toContain('data-ilha="home"');
+  });
+
+  it("includes the client entry script tag", async () => {
+    const body = await router().route("/", homePage).renderHydratable("/", registry);
+
+    const full = htmlTemplate(body, "/entry-client.js");
+    expect(full).toContain('src="/entry-client.js"');
+    expect(full).toContain('type="module"');
+  });
+
+  it("SSR body is inside #app — client hydration target is correct", async () => {
+    const body = await router().route("/about", aboutPage).renderHydratable("/about", registry);
+
+    const full = htmlTemplate(body);
+    const parser = new DOMParser();
+    const doc = parser.parseFromString(full, "text/html");
+    const app = doc.querySelector("#app");
+    expect(app).not.toBeNull();
+    expect(app!.innerHTML).toContain("data-router-view");
+    expect(app!.innerHTML).toContain("about");
+  });
+
+  it("multiple routes produce distinct HTML bodies", async () => {
+    const r = router().route("/", homePage).route("/about", aboutPage);
+    const homeBody = await r.renderHydratable("/", registry);
+    const aboutBody = await r.renderHydratable("/about", registry);
+
+    expect(htmlTemplate(homeBody)).toContain('data-ilha="home"');
+    expect(htmlTemplate(aboutBody)).toContain('data-ilha="about"');
+    expect(htmlTemplate(homeBody)).not.toContain('data-ilha="about"');
+  });
+
+  it("route signals are reset correctly after each renderHydratable call", async () => {
+    const r = router().route("/", homePage).route("/user/:id", userPage);
+
+    await r.renderHydratable("/user/5", registry);
+    expect(routePath()).toBe("/user/5");
+    expect(routeParams()).toEqual({ id: "5" });
+
+    await r.renderHydratable("/", registry);
+    expect(routePath()).toBe("/");
+    expect(routeParams()).toEqual({});
+  });
+});

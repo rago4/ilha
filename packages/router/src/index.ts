@@ -137,17 +137,7 @@ export function enableLinkInterception(root: Element | Document = document): () 
 // RouterView outlet island
 // ─────────────────────────────────────────────
 
-// When hydrating, the first RouterView render must return the existing DOM
-// content verbatim — otherwise ilha.mount()'s already-hydrated [data-ilha]
-// children get clobbered by a fresh island.toString() without hydration markers.
-let _hydrateSnapshot: string | null = null;
-
 export const RouterView = ilha.render((): string => {
-  if (_hydrateSnapshot !== null) {
-    const snap = _hydrateSnapshot;
-    _hydrateSnapshot = null;
-    return snap;
-  }
   const island = activeIsland();
   if (!island) return `<div data-router-empty></div>`;
   return `<div data-router-view>${island.toString()}</div>`;
@@ -215,27 +205,59 @@ export function router(): RouterBuilder {
       _popstateCleanup = () => window.removeEventListener("popstate", popHandler);
       _linkCleanup = enableLinkInterception(document);
 
-      let unmountView: () => void;
+      let unmountView: (() => void) | null = null;
 
       if (hydrate) {
-        // SSR HTML is already in the DOM — ilha.mount() has already hydrated
-        // [data-ilha] nodes with reactivity.  Capture the existing innerHTML
-        // so RouterView's first render returns it verbatim (no-op morph),
-        // preserving the hydrated children.
-        const existing = host.querySelector<Element>("[data-router-view]");
-        if (existing) {
-          _hydrateSnapshot = existing.innerHTML;
-          unmountView = RouterView.mount(existing);
-        } else {
-          // no SSR content found — fall back to normal mount
-          unmountView = RouterView.mount(host);
-        }
-      } else {
-        unmountView = RouterView.mount(host);
+        // SSR HTML is already in the DOM and ilha.mount() has already hydrated
+        // [data-ilha] nodes with reactivity.  We must NOT mount RouterView now —
+        // any morph (even with identical HTML) would replace the live DOM nodes,
+        // destroying the event listeners and signal bindings ilha.mount() wired up.
+        //
+        // Instead we mount a tiny "sentinel" island that subscribes to activeIsland.
+        // On its first render (now) it sees the current value and returns empty markup.
+        // When activeIsland changes (= real navigation), the sentinel unmounts itself,
+        // and mounts RouterView onto [data-router-view] (or host as fallback) so the
+        // router takes over rendering from that point on.
+        const viewHost = host.querySelector<Element>("[data-router-view]") ?? host;
+        const initialIsland = activeIsland();
+
+        const sentinel = ilha.render((): string => {
+          const current = activeIsland();
+          if (current !== initialIsland) {
+            // activeIsland changed — a navigation happened.
+            // Schedule RouterView takeover after this render completes.
+            queueMicrotask(() => {
+              unmountSentinel();
+              unmountView = RouterView.mount(viewHost);
+            });
+          }
+          // Sentinel itself produces no visible markup — the SSR content is
+          // already in the DOM and we must not touch it.
+          return "";
+        });
+
+        // Mount sentinel on a hidden helper node so it doesn't interfere with
+        // the existing [data-router-view] children.
+        const sentinelHost = document.createElement("div");
+        sentinelHost.style.display = "none";
+        host.appendChild(sentinelHost);
+        const unmountSentinel = sentinel.mount(sentinelHost);
+
+        return () => {
+          unmountSentinel();
+          sentinelHost.remove();
+          unmountView?.();
+          _popstateCleanup?.();
+          _linkCleanup?.();
+          _popstateCleanup = null;
+          _linkCleanup = null;
+        };
       }
 
+      unmountView = RouterView.mount(host);
+
       return () => {
-        unmountView();
+        unmountView?.();
         _popstateCleanup?.();
         _linkCleanup?.();
         _popstateCleanup = null;
