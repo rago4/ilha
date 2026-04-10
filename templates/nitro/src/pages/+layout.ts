@@ -5,11 +5,11 @@ import ilha, { html } from "ilha";
 export default ((children) =>
   ilha.slot("children", children).render(
     ({ slots }) => html`
-    <nav>
-      <a href="/" class="${isActive("/") ? "active" : ""}">Home</a>
-      <a href="/about" class="${isActive("/about") ? "active" : ""}">About</a>
+    <nav class="container navbar x-stack">
+      <a href="/" class="button" data-variant="${isActive("/") ? "secondary" : "ghost"}">Home</a>
+      <a href="/learn" class="button" data-variant="${isActive("/learn") ? "secondary" : "ghost"}">Learn</a>
     </nav>
-    <main id="content">
+    <main class="container">
       ${slots.children()}
     </main>
   `,
