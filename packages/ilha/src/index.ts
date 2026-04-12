@@ -578,8 +578,13 @@ export type OnMountContext<
   hydrated: boolean;
 };
 
-export type HandlerContext<TInput, TStateMap extends Record<string, unknown>> = {
+export type HandlerContext<
+  TInput,
+  TStateMap extends Record<string, unknown>,
+  TDerivedMap extends Record<string, unknown> = Record<string, never>,
+> = {
   state: IslandState<TStateMap>;
+  derived: IslandDerived<TDerivedMap>;
   input: TInput;
   host: Element;
   target: Element;
@@ -606,8 +611,10 @@ export type HandlerContextFor<
   TInput,
   TStateMap extends Record<string, unknown>,
   TEventName extends string,
+  TDerivedMap extends Record<string, unknown> = Record<string, never>,
 > = {
   state: IslandState<TStateMap>;
+  derived: IslandDerived<TDerivedMap>;
   input: TInput;
   host: Element;
   target: TEventName extends keyof HTMLElementEventMap
@@ -657,11 +664,15 @@ function parseOnArgs(selectorOrCombined: string): ParsedOn {
   };
 }
 
-interface OnEntry<TInput, TStateMap extends Record<string, unknown>> {
+interface OnEntry<
+  TInput,
+  TStateMap extends Record<string, unknown>,
+  TDerivedMap extends Record<string, unknown> = Record<string, never>,
+> {
   selector: string;
   event: string;
   options: AddEventListenerOptions;
-  handler: (ctx: HandlerContext<TInput, TStateMap>) => void | Promise<void>;
+  handler: (ctx: HandlerContext<TInput, TStateMap, TDerivedMap>) => void | Promise<void>;
 }
 
 interface EffectEntry<TInput, TStateMap extends Record<string, unknown>> {
@@ -703,7 +714,7 @@ interface BuilderConfig<
   schema: StandardSchemaV1 | null;
   states: StateEntry<TInput>[];
   deriveds: DerivedEntry<TInput, TStateMap>[];
-  ons: OnEntry<TInput, TStateMap>[];
+  ons: OnEntry<TInput, TStateMap, TDerivedMap>[];
   effects: EffectEntry<TInput, TStateMap>[];
   onMounts: OnMountEntry<TInput, TStateMap, TDerivedMap>[];
   slots: Record<string, AnyIsland>;
@@ -798,19 +809,19 @@ class IlhaBuilder<
     selectorOrCombined: S,
     handler: (
       ctx: S extends `${string}@${infer E}:${string}`
-        ? HandlerContextFor<TInput, TStateMap, E>
+        ? HandlerContextFor<TInput, TStateMap, E, TDerivedMap>
         : S extends `${string}@${infer E}`
-          ? HandlerContextFor<TInput, TStateMap, E>
-          : HandlerContext<TInput, TStateMap>,
+          ? HandlerContextFor<TInput, TStateMap, E, TDerivedMap>
+          : HandlerContext<TInput, TStateMap, TDerivedMap>,
     ) => void | Promise<void>,
   ): IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots>;
   on(
     selectorOrCombined: string,
-    handler: (ctx: HandlerContext<TInput, TStateMap>) => void | Promise<void>,
+    handler: (ctx: HandlerContext<TInput, TStateMap, TDerivedMap>) => void | Promise<void>,
   ): IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots>;
   on(
     selectorOrCombined: string,
-    handler: (ctx: HandlerContext<TInput, TStateMap>) => void | Promise<void>,
+    handler: (ctx: HandlerContext<TInput, TStateMap, TDerivedMap>) => void | Promise<void>,
   ): IlhaBuilder<TInput, TStateMap, TDerivedMap, TSlots> {
     const parsed = parseOnArgs(selectorOrCombined);
     return new IlhaBuilder({
@@ -821,7 +832,9 @@ class IlhaBuilder<
           selector: parsed.selector,
           event: parsed.eventType,
           options: parsed.options,
-          handler: handler as (ctx: HandlerContext<TInput, TStateMap>) => void | Promise<void>,
+          handler: handler as (
+            ctx: HandlerContext<TInput, TStateMap, TDerivedMap>,
+          ) => void | Promise<void>,
         },
       ],
     });
@@ -1109,10 +1122,10 @@ class IlhaBuilder<
         type: string;
         fn: EventListener;
         options: AddEventListenerOptions;
-        entry: OnEntry<TInput, TStateMap>;
+        entry: OnEntry<TInput, TStateMap, TDerivedMap>;
       };
       const listeners: ListenerEntry[] = [];
-      const firedOnce = new Set<OnEntry<TInput, TStateMap>>();
+      const firedOnce = new Set<OnEntry<TInput, TStateMap, TDerivedMap>>();
 
       function attachListeners() {
         for (const entry of ons) {
@@ -1143,7 +1156,14 @@ class IlhaBuilder<
               const eventTarget = (
                 event.target instanceof Element ? event.target : listenerTarget
               ) as Element;
-              const result = entry.handler({ state, input, host, target: eventTarget, event });
+              const result = entry.handler({
+                state,
+                derived,
+                input,
+                host,
+                target: eventTarget,
+                event,
+              });
               if (result instanceof Promise) result.catch(console.error);
             };
             const opts = { ...entry.options, once: false };

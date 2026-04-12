@@ -1,4 +1,3 @@
-import RootLayout from "$routes/+layout";
 import { effect } from "alien-signals";
 import dedent from "dedent";
 import ilha, { html, raw } from "ilha";
@@ -47,9 +46,9 @@ function buildSrcDoc() {
   `;
 }
 
-type TutorialLayoutProps = { content: string; code: Code };
+type TutorialProps = { content: string; code: Code };
 
-const TutorialLayout = ({ content, code }: TutorialLayoutProps) => {
+export const Tutorial = ({ content, code }: TutorialProps) => {
   const template = ilha.context("tutorial.template", code.template);
   const script = ilha.context("tutorial.script", code.script);
   const contentHtml = md.render(content);
@@ -150,5 +149,3 @@ const TutorialLayout = ({ content, code }: TutorialLayoutProps) => {
       `,
     );
 };
-
-export default (props: TutorialLayoutProps) => RootLayout(TutorialLayout(props));

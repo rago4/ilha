@@ -21,7 +21,9 @@
     "paths": {
       "$lib/*": ["./src/lib/*"],
       "$routes/*": ["./src/routes/*"],
-      "ilha": ["../../packages/ilha/src/index.ts"]
+      "ilha": ["../../packages/ilha/src/index.ts"],
+      "@ilha/router": ["../../packages/router/src/index.ts"],
+      "@ilha/router/vite": ["../../packages/router/src/vite.ts"]
     }
   }
 }

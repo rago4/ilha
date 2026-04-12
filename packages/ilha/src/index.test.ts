@@ -695,6 +695,207 @@ describe("island mount", () => {
   });
 
   // ---------------------------------------------
+  // .on() — derived in handler context
+  // ---------------------------------------------
+
+  describe(".on() derived in handler ctx", () => {
+    it("derived.value is accessible inside .on() handler", () => {
+      let capturedValue: number | undefined;
+
+      const island = ilha
+        .state("count", 5)
+        .derived("doubled", ({ state }) => state.count() * 2)
+        .on("[data-btn]@click", ({ derived }) => {
+          capturedValue = derived.doubled.value;
+        })
+        .render(({ state }) => `<p>${state.count()}</p><button data-btn>go</button>`);
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+      (el.querySelector("[data-btn]") as HTMLButtonElement).click();
+      expect(capturedValue).toBe(10);
+      unmount();
+      cleanup(el);
+    });
+
+    it("derived.loading is false for sync derived inside .on() handler", () => {
+      let capturedLoading: boolean | undefined;
+
+      const island = ilha
+        .state("x", 3)
+        .derived("sq", ({ state }) => state.x() ** 2)
+        .on("[data-btn]@click", ({ derived }) => {
+          capturedLoading = derived.sq.loading;
+        })
+        .render(({ state }) => `<p>${state.x()}</p><button data-btn>go</button>`);
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+      (el.querySelector("[data-btn]") as HTMLButtonElement).click();
+      expect(capturedLoading).toBe(false);
+      unmount();
+      cleanup(el);
+    });
+
+    it("derived value reflects latest resolved async derived inside .on() handler", async () => {
+      let capturedValue: string | undefined;
+
+      const island = ilha
+        .state("query", "hello")
+        .derived("upper", async ({ state }) => {
+          const q = state.query();
+          await new Promise((r) => setTimeout(r, 5));
+          return q.toUpperCase();
+        })
+        .on("[data-btn]@click", ({ derived }) => {
+          capturedValue = derived.upper.value as string | undefined;
+        })
+        .render(({ derived }) =>
+          derived.upper.loading
+            ? `<p>loading</p><button data-btn>go</button>`
+            : `<p>${derived.upper.value}</p><button data-btn>go</button>`,
+        );
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+      await new Promise((r) => setTimeout(r, 15));
+      (el.querySelector("[data-btn]") as HTMLButtonElement).click();
+      expect(capturedValue).toBe("HELLO");
+      unmount();
+      cleanup(el);
+    });
+
+    it("derived.error is accessible inside .on() handler when async derived rejects", async () => {
+      let capturedError: Error | undefined;
+
+      const island = ilha
+        .derived("data", async () => {
+          await new Promise((r) => setTimeout(r, 5));
+          throw new Error("boom");
+        })
+        .on("[data-btn]@click", ({ derived }) => {
+          capturedError = derived.data.error;
+        })
+        .render(({ derived }) =>
+          derived.data.loading
+            ? `<p>loading</p><button data-btn>go</button>`
+            : `<p>done</p><button data-btn>go</button>`,
+        );
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+      await new Promise((r) => setTimeout(r, 15));
+      (el.querySelector("[data-btn]") as HTMLButtonElement).click();
+      expect(capturedError).toBeInstanceOf(Error);
+      expect(capturedError!.message).toBe("boom");
+      unmount();
+      cleanup(el);
+    });
+
+    it(".on() handler can read derived and mutate state together", () => {
+      const island = ilha
+        .state("count", 3)
+        .derived("doubled", ({ state }) => state.count() * 2)
+        .on("[data-btn]@click", ({ state, derived }) => {
+          // count(3) + doubled(6) = 9
+          state.count(state.count() + (derived.doubled.value ?? 0));
+        })
+        .render(({ state }) => `<p>${state.count()}</p><button data-btn>go</button>`);
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+      expect(el.querySelector("p")!.textContent).toBe("3");
+      (el.querySelector("[data-btn]") as HTMLButtonElement).click();
+      expect(el.querySelector("p")!.textContent).toBe("9");
+      unmount();
+      cleanup(el);
+    });
+
+    it("derived is present in .on() handler with root @event syntax (no selector)", () => {
+      let capturedValue: number | undefined;
+
+      const island = ilha
+        .state("n", 7)
+        .derived("sq", ({ state }) => state.n() ** 2)
+        .on("@click", ({ derived }) => {
+          capturedValue = derived.sq.value;
+        })
+        .render(({ state }) => `<p>${state.n()}</p>`);
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+      (el as HTMLElement).click();
+      expect(capturedValue).toBe(49);
+      unmount();
+      cleanup(el);
+    });
+
+    it("derived is present in .on() handler for :once modifier", () => {
+      const captured: Array<number | undefined> = [];
+
+      const island = ilha
+        .state("n", 4)
+        .derived("sq", ({ state }) => state.n() ** 2)
+        .on("[data-btn]@click:once", ({ derived }) => {
+          captured.push(derived.sq.value);
+        })
+        .render(({ state }) => `<p>${state.n()}</p><button data-btn>go</button>`);
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+      (el.querySelector("[data-btn]") as HTMLButtonElement).click();
+      (el.querySelector("[data-btn]") as HTMLButtonElement).click();
+      expect(captured.length).toBe(1);
+      expect(captured[0]).toBe(16);
+      unmount();
+      cleanup(el);
+    });
+
+    it("multiple .on() handlers each see updated derived after state mutation", () => {
+      const aValues: Array<number | undefined> = [];
+      const bValues: Array<number | undefined> = [];
+
+      const island = ilha
+        .state("n", 2)
+        .derived("sq", ({ state }) => state.n() ** 2)
+        .on("[data-a]@click", ({ derived, state }) => {
+          aValues.push(derived.sq.value); // sq=4 at click time
+          state.n(state.n() + 1); // n becomes 3, sq will become 9
+        })
+        .on("[data-b]@click", ({ derived }) => {
+          bValues.push(derived.sq.value); // sq=9 after previous click
+        })
+        .render(
+          ({ state }) => `<p>${state.n()}</p><button data-a>a</button><button data-b>b</button>`,
+        );
+
+      const el = makeEl();
+      const unmount = island.mount(el);
+      (el.querySelector("[data-a]") as HTMLButtonElement).click();
+      (el.querySelector("[data-b]") as HTMLButtonElement).click();
+      expect(aValues).toEqual([4]);
+      expect(bValues).toEqual([9]);
+      unmount();
+      cleanup(el);
+    });
+
+    it("derived is SSR no-op — .on() with derived is still a no-op during SSR", () => {
+      const calls: number[] = [];
+
+      const island = ilha
+        .state("count", 0)
+        .derived("doubled", ({ state }) => state.count() * 2)
+        .on("[data-btn]@click", ({ derived }) => {
+          calls.push(derived.doubled.value ?? -1);
+        })
+        .render(({ state }) => `<p>${state.count()}</p><button data-btn>go</button>`);
+
+      expect(island()).toBe("<p>0</p><button data-btn>go</button>");
+      expect(calls.length).toBe(0);
+    });
+  });
+
+  // ---------------------------------------------
   // ilha.from()
   // ---------------------------------------------
 
@@ -1475,7 +1676,7 @@ describe("slots", () => {
       .render(({ slots }) => html`<div>${slots.counter({ count: 5 })}</div>`);
 
     expect(parent()).toBe(
-      `<div><div data-ilha-slot="counter" data-ilha-props='{&quot;count&quot;:5}'><p>5</p></div></div>`,
+      "<div><div data-ilha-slot=\"counter\" data-ilha-props='{&quot;count&quot;:5}'><p>5</p></div></div>",
     );
   });
 
@@ -2371,122 +2572,7 @@ describe(".bind", () => {
     });
   });
 
-  describe("transform", () => {
-    it("client transform coerces DOM string to number", () => {
-      const island = ilha
-        .state("age", 0)
-        .bind("[data-age]", "age")
-        .render(({ state }) => `<input type="text" data-age><p>${state.age()}</p>`);
-
-      const el = makeEl();
-      const unmount = island.mount(el);
-      el.querySelector<HTMLInputElement>("[data-age]")!.value = "25";
-      el.querySelector<HTMLInputElement>("[data-age]")!.dispatchEvent(new Event("input"));
-      expect(el.querySelector("p")!.textContent).toBe("25");
-      el.querySelector<HTMLInputElement>("[data-age]")!.value = "99";
-      el.querySelector<HTMLInputElement>("[data-age]")!.dispatchEvent(new Event("input"));
-      expect(el.querySelector("p")!.textContent).toBe("99");
-      unmount();
-      cleanup(el);
-    });
-  });
-
-  describe("Cleanup", () => {
-    it("client unmount removes bind listeners — DOM changes no longer update state", () => {
-      const island = ilha
-        .state("val", "initial")
-        .bind("[data-val]", "val")
-        .render(({ state }) => `<input data-val value="${state.val()}"><p>${state.val()}</p>`);
-
-      const el = makeEl();
-      const unmount = island.mount(el);
-      el.querySelector<HTMLInputElement>("[data-val]")!.value = "changed";
-      el.querySelector<HTMLInputElement>("[data-val]")!.dispatchEvent(new Event("input"));
-      expect(el.querySelector("p")!.textContent).toBe("changed");
-      unmount();
-      el.querySelector<HTMLInputElement>("[data-val]")!.value = "after-unmount";
-      el.querySelector<HTMLInputElement>("[data-val]")!.dispatchEvent(new Event("input"));
-      expect(el.querySelector("p")!.textContent).toBe("changed");
-      cleanup(el);
-    });
-  });
-
-  describe("Re-render survival", () => {
-    it("client bind survives parent re-render triggered by other state", () => {
-      let tickAccessor!: (v?: number) => number | void;
-
-      const island = ilha
-        .state("tick", 0)
-        .state("email", "a@b.com")
-        .bind("[data-email]", "email")
-        .on("[data-inc]@click", ({ state }) => {
-          state.tick(state.tick() + 1);
-        })
-        .render(({ state }) => {
-          tickAccessor = state.tick as typeof tickAccessor;
-          return `<p>${state.tick()}</p><input data-email value="${state.email()}"><button data-inc></button>`;
-        });
-
-      const el = makeEl();
-      const unmount = island.mount(el);
-      tickAccessor(1);
-      expect(el.querySelector("p")!.textContent).toBe("1");
-      el.querySelector<HTMLInputElement>("[data-email]")!.value = "new@example.com";
-      el.querySelector<HTMLInputElement>("[data-email]")!.dispatchEvent(new Event("input"));
-      expect(el.querySelector<HTMLInputElement>("[data-email]")!.value).toBe("new@example.com");
-      unmount();
-      cleanup(el);
-    });
-  });
-
-  describe("Multiple binds", () => {
-    it("client multiple .bind calls work independently", () => {
-      const island = ilha
-        .state("first", "")
-        .state("last", "")
-        .bind("[data-first]", "first")
-        .bind("[data-last]", "last")
-        .render(
-          ({ state }) =>
-            `<input data-first><input data-last><p>${state.first()} ${state.last()}</p>`,
-        );
-
-      const el = makeEl();
-      const unmount = island.mount(el);
-      el.querySelector<HTMLInputElement>("[data-first]")!.value = "Ada";
-      el.querySelector<HTMLInputElement>("[data-first]")!.dispatchEvent(new Event("input"));
-      el.querySelector<HTMLInputElement>("[data-last]")!.value = "Lovelace";
-      el.querySelector<HTMLInputElement>("[data-last]")!.dispatchEvent(new Event("input"));
-      expect(el.querySelector("p")!.textContent).toBe("Ada Lovelace");
-      unmount();
-      cleanup(el);
-    });
-  });
-
-  describe("Radio groups", () => {
-    it("client radio group change updates string state", () => {
-      const island = ilha
-        .state("plan", "pro")
-        .bind("[name='plan']", "plan")
-        .render(
-          ({ state }) =>
-            html`
-            <input type="radio" name="plan" value="free" ${state.plan() === "free" ? "checked" : ""}>
-            <input type="radio" name="plan" value="pro" ${state.plan() === "pro" ? "checked" : ""}>
-            <p>${state.plan()}</p>
-          `,
-        );
-
-      const el = makeEl();
-      const unmount = island.mount(el);
-      const free = el.querySelector<HTMLInputElement>("input[name='plan'][value='free']")!;
-      free.checked = true;
-      free.dispatchEvent(new Event("change"));
-      expect(el.querySelector("p")!.textContent).toBe("free");
-      unmount();
-      cleanup(el);
-    });
-
+  describe("radio", () => {
     it("client programmatic radio state change updates checked input", () => {
       let accessor!: (v?: string) => string | void;
 

@@ -14,5 +14,10 @@
 }
 
 .shiki {
-  @apply p-2;
+  @apply p-4;
+  /*background-color: rgba(250, 244, 237, 0.8) !important;*/
+}
+
+.container {
+  @apply max-w-320;
 }

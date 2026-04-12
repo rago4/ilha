@@ -1,6 +1,5 @@
+import { Tutorial } from "$lib/components/tutorial";
 import dedent from "dedent";
-
-import Layout from "./+layout";
 
 const content = dedent`
   # Hello World
@@ -33,4 +32,4 @@ const code = {
   `,
 };
 
-export default Layout({ content, code });
+export default Tutorial({ content, code });
