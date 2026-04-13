@@ -114,19 +114,7 @@ export const Tutorial = ({ content, code, key }: TutorialProps) => {
     })
     .render(
       () => html`
-        <div class="flex h-full flex-col gap-2 overflow-hidden">
-          <div class="tabs w-full shrink-0" id="demo-tabs-with-panels">
-            <nav role="tablist" aria-orientation="horizontal" class="w-full">
-              <button type="button" role="tab" aria-selected="true" tabindex="0" data-tab="script">
-                Script
-              </button>
-              <button type="button" role="tab" aria-selected="false" tabindex="0" data-tab="template">
-                Template
-              </button>
-            </nav>
-          </div>
-          <div id="editor" class="flex-1 overflow-hidden rounded-lg border"></div>
-        </div>
+        <div id="editor" class="flex-1 overflow-hidden"></div>
       `,
     );
 
@@ -176,9 +164,7 @@ export const Tutorial = ({ content, code, key }: TutorialProps) => {
     })
     .render(
       () => html`
-      <div class="h-full min-h-[36rem] lg:min-h-auto overflow-hidden border rounded-lg p-4">
-        <iframe class="w-full h-full" srcdoc="${buildSrcDoc()}"></iframe>
-      </div>
+        <iframe class="flex-1" srcdoc="${buildSrcDoc()}"></iframe>
     `,
     );
 
@@ -187,19 +173,21 @@ export const Tutorial = ({ content, code, key }: TutorialProps) => {
     .slot("preview", Preview)
     .render(
       ({ slots }) => html`
-        <div class="w-full lg:h-[100rem]">
-          <div class="grid gap-4 h-full grid-cols-1 lg:grid-cols-2 grid-cols-none lg:grid-rows-2">
-            <div class="overflow-hidden rounded-lg border p-4 flex flex-col">
-              <h2 class="text-xl font-semibold shrink-0">Tutorials</h2>
-              <div class="flex flex-col mt-4 overflow-auto">
-                ${TUTORIAL_LIST.map((t) => html`<a href="${t.href}" class="${isActive(t.href) ? "btn-secondary" : "btn-ghost"} justify-start">${t.label}</a>`)}
-              </div>
+        <div class="flex-1 flex flex-col lg:grid grid-cols-6 grid-rows-2 border rounded-2xl overflow-hidden *:max-h-[40rem] h-full">
+          <div class="col-span-2 bg-neutral-50 border-r p-4 border-b">
+            <h2 class="text-xl font-semibold shrink-0">Tutorials</h2>
+            <div class="flex flex-col mt-4 overflow-auto">
+              ${TUTORIAL_LIST.map((t) => html`<a href="${t.href}" class="${isActive(t.href) ? "btn-outline" : "btn-ghost"} justify-start">${t.label}</a>`)}
             </div>
-            <div class="relative overflow-hidden rounded-lg border">
-              <div class="h-full overflow-auto prose p-4 pb-16">${raw(contentHtml)}</div>
-              <div class="pointer-events-none absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white via-white/80 to-transparent dark:from-gray-900 dark:via-gray-900/80"></div>
-            </div>
+          </div>
+          <div class="col-span-4 col-start-3 relative overflow-auto border-b">
+            <div class="prose mx-auto p-4 pb-16">${raw(contentHtml)}</div>
+            <div class="pointer-events-none sticky bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-white via-white/80 to-transparent dark:from-gray-900 dark:via-gray-900/80 mt-[-4rem]"></div>
+          </div>
+          <div class="flex col-span-3 row-start-2 overflow-hidden">
             ${slots.editor()}
+          </div>
+          <div class="flex col-span-3 col-start-4 row-start-2 overflow-hidden p-4 min-h-[36rem]">
             ${slots.preview()}
           </div>
         </div>

@@ -35,7 +35,6 @@ const code = {
   script: dedent`
     import ilha, { html, mount } from "ilha";
 
-
     const counter = ilha
       .state("count", 1)
       .derived("doubled", ({ state }) => state.count() * 2)
@@ -49,7 +48,6 @@ const code = {
           <button data-action="increase">increase</button>
         \`
       );
-
 
     mount({ counter });
   `,

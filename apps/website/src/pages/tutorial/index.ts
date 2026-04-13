@@ -32,6 +32,8 @@ const code = {
       );
 
     mount({ counter });
+
+    // HTML: <div data-ilha="counter"></div>
   `,
 };
 

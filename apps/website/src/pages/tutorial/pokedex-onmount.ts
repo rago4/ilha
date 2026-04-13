@@ -83,6 +83,8 @@ const code = {
       });
 
     mount({ pokedex });
+
+    // HTML: <div data-ilha="pokedex"></div>
   `,
 };
 

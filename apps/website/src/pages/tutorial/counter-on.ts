@@ -34,7 +34,6 @@ const code = {
   script: dedent`
     import ilha, { html, mount } from "ilha";
 
-
     const counter = ilha
       .state("count", 0)
       .on("[data-action=increase]@click", ({ state }) => {
@@ -46,7 +45,6 @@ const code = {
           <button data-action="increase">increase</button>
         \`
       );
-
 
     mount({ counter });
   `,
