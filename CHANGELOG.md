@@ -4,6 +4,8 @@
 
 ### 0.1.0 — 2026-04-14
 
+Initial release of **ilha** — a tiny, isomorphic island framework for building reactive UI components. Renders to HTML strings on the server and mounts as fine-grained reactive islands in the browser. No virtual DOM. No compiler. Powered by [alien-signals](https://github.com/stackblitz/alien-signals).
+
 - Adds fluent builder API: `.input(schema)` — typed external props via any Standard Schema validator (Zod, Valibot, ArkType, or the built-in `type()` helper); async schemas are not supported
 - Adds fluent builder API: `.state(key, init?)` — reactive signal; init can be a static value or a function receiving resolved input
 - Adds fluent builder API: `.derived(key, fn)` — sync or async derived value with `{ loading, value, error }` envelope; re-runs reactively; supports `AbortSignal` cancellation on re-run

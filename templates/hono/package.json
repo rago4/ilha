@@ -8,9 +8,9 @@
   },
   "dependencies": {
     "@hono/node-server": "^1.19.12",
-    "@ilha/router": "https://pkg.pr.new/ilhajs/ilha/@ilha/router@64dfe47",
+    "@ilha/router": "^0.1.1",
     "hono": "^4.12.9",
-    "ilha": "https://pkg.pr.new/ilhajs/ilha@64dfe47"
+    "ilha": "^0.1.0"
   },
   "devDependencies": {
     "@types/node": "^20.11.17",

@@ -43,14 +43,14 @@
     },
     "packages/form": {
       "name": "@ilha/form",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "devDependencies": {
         "zod": "^4.3.6",
       },
     },
     "packages/ilha": {
       "name": "ilha",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "dependencies": {
         "alien-signals": "3.1.2",
       },
@@ -61,10 +61,10 @@
     },
     "packages/router": {
       "name": "@ilha/router",
-      "version": "0.0.1",
+      "version": "0.1.1",
       "dependencies": {
-        "ilha": "workspace:*",
-        "rou3": "^0.8.1",
+        "ilha": "0.1.0",
+        "rou3": "0.8.1",
       },
       "devDependencies": {
         "vite": "^8.0.7",
@@ -72,9 +72,9 @@
     },
     "packages/store": {
       "name": "@ilha/store",
-      "version": "0.0.1",
+      "version": "0.1.0",
       "dependencies": {
-        "alien-signals": "^3.1.2",
+        "alien-signals": "3.1.2",
         "ilha": "workspace:*",
       },
       "devDependencies": {

@@ -1,5 +1,7 @@
 # Ilha
 
+> Alpha is live
+
 **Ilha** is a tiny, isomorphic web UI library built around the [islands architecture](https://www.patterns.dev/vanilla/islands-architecture/) — ship minimal JavaScript, hydrate only what matters.
 
 ## Features

@@ -6,9 +6,9 @@
       "name": "hono",
       "dependencies": {
         "@hono/node-server": "^1.19.12",
-        "@ilha/router": "https://pkg.pr.new/ilhajs/ilha/@ilha/router@64dfe47",
+        "@ilha/router": "^0.1.1",
         "hono": "^4.12.9",
-        "ilha": "https://pkg.pr.new/ilhajs/ilha@64dfe47",
+        "ilha": "^0.1.0",
       },
       "devDependencies": {
         "@types/node": "^20.11.17",
@@ -36,7 +36,7 @@
 
     "@hono/node-server": ["@hono/node-server@1.19.13", "", { "peerDependencies": { "hono": "^4" } }, "sha512-TsQLe4i2gvoTtrHje625ngThGBySOgSK3Xo2XRYOdqGN1teR8+I7vchQC46uLJi8OF62YTYA3AhSpumtkhsaKQ=="],
 
-    "@ilha/router": ["@ilha/router@https://pkg.pr.new/ilhajs/ilha/@ilha/router@64dfe47", { "dependencies": { "ilha": "https://pkg.pr.new/ilhajs/ilha/ilha@64dfe4774c9d7c8e80d9bf2e5b867d0f5a420cd1", "rou3": "^0.8.1" } }, "sha512-yLkhe/AShadOZDcXURFI/mBXbQcEGlIWX5JsR1TQd7bhKj6iLdd2GWjNJ/pMKWIJ8orN2Kvq9hhCwCk4FKsmXw=="],
+    "@ilha/router": ["@ilha/router@0.1.1", "", { "dependencies": { "ilha": "0.1.0", "rou3": "0.8.1" } }, "sha512-fLhYs9ELLBKzI5LDFd+2BiGisFxZ+nv6CBVKystEtUmA6YepoBW/87SeNqAUjAE6JZy9gooM3PQ0szIwmlm9zg=="],
 
     "@jridgewell/gen-mapping": ["@jridgewell/gen-mapping@0.3.13", "", { "dependencies": { "@jridgewell/sourcemap-codec": "^1.5.0", "@jridgewell/trace-mapping": "^0.3.24" } }, "sha512-2kkt/7niJ6MgEPxF0bYdQ6etZaA+fQvDcLKckhy1yIQOzaoKjBBjSj63/aLVjYE3qhRt5dvM+uUyfCg6UKCBbA=="],
 
@@ -118,7 +118,7 @@
 
     "hookable": ["hookable@6.1.0", "", {}, "sha512-ZoKZSJgu8voGK2geJS+6YtYjvIzu9AOM/KZXsBxr83uhLL++e9pEv/dlgwgy3dvHg06kTz6JOh1hk3C8Ceiymw=="],
 
-    "ilha": ["ilha@https://pkg.pr.new/ilhajs/ilha@64dfe47", { "dependencies": { "alien-signals": "3.1.2" } }, "sha512-BV5z5U3tzlQWQCr+TaLpvwLhHdZzjxqpUmot0VUbkhAUnLotcUIMxIE0gyUojc8PistuAyqqRsRTLKt/E7A4XQ=="],
+    "ilha": ["ilha@0.1.0", "", { "dependencies": { "alien-signals": "3.1.2" } }, "sha512-x2GzC8BMdNHZmI+yBMNbMW2mzbqmWg3dhGyOi281vZ+A2O9zXrDlVRKBe5BlDOu1wR6OlFUL5LNN8uGlqh/ZUQ=="],
 
     "import-without-cache": ["import-without-cache@0.2.5", "", {}, "sha512-B6Lc2s6yApwnD2/pMzFh/d5AVjdsDXjgkeJ766FmFuJELIGHNycKRj+l3A39yZPM4CchqNCB4RITEAYB1KUM6A=="],
 
@@ -159,7 +159,5 @@
     "undici-types": ["undici-types@6.21.0", "", {}, "sha512-iwDZqg0QAGrg9Rav5H4n0M64c3mkR59cJ6wQp+7C4nI0gsmExaedaYLNO44eT4AtBBwjbTiGPMlt2Md0T9H9JQ=="],
 
     "unrun": ["unrun@0.2.34", "", { "dependencies": { "rolldown": "1.0.0-rc.12" }, "peerDependencies": { "synckit": "^0.11.11" }, "optionalPeers": ["synckit"], "bin": { "unrun": "dist/cli.mjs" } }, "sha512-LyaghRBR++r7svhDK6tnDz2XaYHWdneBOA0jbS8wnRsHerI9MFljX4fIiTgbbNbEVzZ0C9P1OjWLLe1OqoaaEw=="],
-
-    "@ilha/router/ilha": ["ilha@https://pkg.pr.new/ilhajs/ilha/ilha@64dfe4774c9d7c8e80d9bf2e5b867d0f5a420cd1", { "dependencies": { "alien-signals": "3.1.2" } }, "sha512-BV5z5U3tzlQWQCr+TaLpvwLhHdZzjxqpUmot0VUbkhAUnLotcUIMxIE0gyUojc8PistuAyqqRsRTLKt/E7A4XQ=="],
   }
 }
