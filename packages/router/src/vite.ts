@@ -42,10 +42,19 @@ function fileToSegment(name: string): string {
   return name;
 }
 
+/** Route-group directories like "(auth)" are transparent to the URL. */
+function dirToSegment(name: string): string {
+  if (name.startsWith("(") && name.endsWith(")")) return "";
+  return fileToSegment(name);
+}
+
 function fileToPattern(pagesDir: string, file: string): string {
   const rel = relative(pagesDir, file);
   const noExt = rel.slice(0, -extname(rel).length);
-  const segments = noExt.split("/").map(fileToSegment);
+  const parts = noExt.split("/");
+
+  const segments = [...parts.slice(0, -1).map(dirToSegment), fileToSegment(parts.at(-1)!)];
+
   if (segments.at(-1) === "index") segments.pop();
   return "/" + segments.filter(Boolean).join("/") || "/";
 }
@@ -118,6 +127,7 @@ async function collectFiles(dir: string, depth = 0): Promise<string[]> {
     console.warn(`[ilha:pages] Max scan depth (${MAX_SCAN_DEPTH}) reached at ${dir} — skipping`);
     return [];
   }
+
   const results: string[] = [];
   for (const entry of await readdir(dir, { withFileTypes: true })) {
     const full = join(dir, entry.name);
@@ -203,7 +213,7 @@ async function generate(pagesDir: string, outFile: string): Promise<void> {
 
   const imports: string[] = [
     `import { router, wrapLayout, wrapError } from "@ilha/router";`,
-    `import type { Island }                    from "ilha";`,
+    `import type { Island } from "ilha";`,
   ];
 
   const wrappedIslandLines: string[] = [];
