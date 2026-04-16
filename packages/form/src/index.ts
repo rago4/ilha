@@ -52,21 +52,37 @@ export declare namespace StandardSchemaV1 {
 // Types
 // ---------------------------------------------------------------------------
 
+/**
+ * Discriminated union result from reading or validating form values.
+ * Never throws — validation failures are returned as data.
+ */
 export type FormResult<T> =
   | { ok: true; data: T }
   | { ok: false; issues: ReadonlyArray<StandardSchemaV1.Issue> };
 
+/**
+ * Per-field error map. Keys are dot-separated field paths matching the
+ * schema's issue path (e.g. `"user.email"`). Values are arrays of messages
+ * so multiple failing rules on a single field are all surfaced.
+ */
 export type FormErrors = Record<string, string[]>;
 
+/**
+ * When to run schema validation automatically against field changes.
+ *
+ * - `"submit"` (default) — only on form submission
+ * - `"change"` — on `change` events (after a field loses focus with a new value)
+ * - `"input"` — on every `input` event (every keystroke)
+ */
 export type ValidateOn = "submit" | "change" | "input";
 
 /**
  * Partial map of field names to their default values.
- * Use `string` for text/select inputs and `string[]` for checkbox groups.
+ * Keys are the DOM `name` attributes — arbitrary strings, including dotted
+ * paths like `"user.email"`. Values are strings or string arrays (for
+ * checkbox groups / multi-select).
  */
-export type DefaultValues<S extends StandardSchemaV1> = Partial<
-  Record<keyof StandardSchemaV1.InferInput<S> & string, string | string[]>
->;
+export type DefaultValues = Partial<Record<string, string | string[]>>;
 
 export interface CreateFormOptions<S extends StandardSchemaV1> {
   /** The form element to bind to. */
@@ -81,7 +97,9 @@ export interface CreateFormOptions<S extends StandardSchemaV1> {
    */
   onSubmit: (values: StandardSchemaV1.InferOutput<S>, event: SubmitEvent) => void;
 
-  /** Called with structured issues when schema validation fails on submission. */
+  /**
+   * Called with structured issues when schema validation fails on submission.
+   */
   onError?: (issues: ReadonlyArray<StandardSchemaV1.Issue>, event: SubmitEvent) => void;
 
   /**
@@ -93,20 +111,48 @@ export interface CreateFormOptions<S extends StandardSchemaV1> {
   /**
    * Initial values applied to form fields on `mount()`.
    * Keys are field `name` attributes; values are strings (or string arrays
-   * for checkbox / multi-select groups).
+   * for checkbox / multi-select groups). File inputs are always skipped.
    *
    * @example
    * defaultValues: { email: "ada@example.com", role: "admin" }
    */
-  defaultValues?: DefaultValues<S>;
+  defaultValues?: DefaultValues;
 }
 
 export interface Form<S extends StandardSchemaV1> {
+  /**
+   * Read and validate the current form values synchronously against the schema.
+   * Returns a discriminated union — never throws.
+   */
   values(): FormResult<StandardSchemaV1.InferOutput<S>>;
+
+  /**
+   * The per-field error state from the last validation attempt.
+   * Empty object before the first validation runs.
+   */
   errors(): FormErrors;
+
+  /**
+   * Whether any field value has changed since `mount()` was called.
+   */
   isDirty(): boolean;
+
+  /**
+   * Manually trigger the validate → onSubmit/onError cycle programmatically.
+   */
   submit(): void;
+
+  /**
+   * Attach event listeners to the form and activate the binding.
+   * If `defaultValues` are provided they are applied to the DOM here, and
+   * any stale validation state is cleared.
+   * Returns a cleanup/unmount function.
+   */
   mount(): () => void;
+
+  /**
+   * Remove all event listeners. Idempotent.
+   */
   unmount(): void;
 }
 
@@ -164,9 +210,14 @@ export function issuesToErrors(issues: ReadonlyArray<StandardSchemaV1.Issue>): F
 
 /**
  * Applies `defaultValues` to the DOM elements inside the form.
- * - Text / number / select / textarea: sets `.value`
- * - Checkbox: checks the element if its `.value` is included in the default array (or matches string)
- * - Radio: checks the element whose `.value` matches the default string
+ *
+ * - Text / number / email / … inputs: sets `.value`
+ * - `type="file"`: skipped — browser blocks programmatic `.value` assignment
+ * - `type="checkbox"`: checks the element if its `.value` is in the default array
+ * - `type="radio"`: checks the element whose `.value` matches the default string
+ * - `<select>`: sets `.value`
+ * - `<select multiple>`: marks each matching option as `.selected`
+ * - `<textarea>`: sets `.value`
  */
 function applyDefaultValues(
   form: HTMLFormElement,
@@ -186,7 +237,8 @@ function applyDefaultValues(
           el.checked = values.includes(el.value);
         } else if (el.type === "radio") {
           el.checked = el.value === defaultValue;
-        } else {
+        } else if (el.type !== "file") {
+          // file inputs are intentionally skipped — browser blocks programmatic .value
           el.value = Array.isArray(defaultValue) ? (defaultValue[0] ?? "") : defaultValue;
         }
       } else if (el instanceof HTMLSelectElement) {
@@ -212,15 +264,38 @@ function applyDefaultValues(
  * Bind a Standard Schema to a form element. Wires up typed submission,
  * validation, and per-field error state using native DOM event listeners.
  *
+ * Designed to integrate cleanly with ilha islands — pass `el` from an
+ * `.effect()` context or resolve it inside `.on()` handlers.
+ *
  * @example
- * const form = createForm({
- *   el: formEl,
- *   schema: z.object({ email: z.string().email(), name: z.string().min(1) }),
- *   defaultValues: { email: "ada@example.com" },
- *   onSubmit(values) { console.log(values); },
- *   validateOn: "change",
- * });
- * return form.mount();
+ * const island = ilha
+ *   .state("errors", {} as FormErrors)
+ *   .effect(({ el, state }) => {
+ *     const formEl = el.querySelector("form")!;
+ *     const form = createForm({
+ *       el: formEl,
+ *       schema: z.object({
+ *         email: z.string().email(),
+ *         name: z.string().min(1),
+ *       }),
+ *       defaultValues: { email: "ada@example.com" },
+ *       onSubmit(values) {
+ *         console.log(values);
+ *       },
+ *       onError(issues) {
+ *         state.errors(issuesToErrors(issues));
+ *       },
+ *       validateOn: "change",
+ *     });
+ *     return form.mount();
+ *   })
+ *   .render(({ state }) => html`
+ *     <form>
+ *       <input name="email" />
+ *       <input name="name" />
+ *       <button>Submit</button>
+ *     </form>
+ *   `);
  */
 export function createForm<S extends StandardSchemaV1>(options: CreateFormOptions<S>): Form<S> {
   const { el, schema, onSubmit, onError, validateOn = "submit", defaultValues } = options;
@@ -275,9 +350,10 @@ export function createForm<S extends StandardSchemaV1>(options: CreateFormOption
     },
 
     mount() {
-      // Apply default values to DOM before attaching listeners
       if (defaultValues) {
-        applyDefaultValues(el, defaultValues as Record<string, string | string[]>);
+        applyDefaultValues(el, defaultValues);
+        // Reset stale validation state — defaults represent a fresh baseline
+        currentErrors = {};
       }
 
       const listeners: Array<() => void> = [];
