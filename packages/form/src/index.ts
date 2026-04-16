@@ -350,9 +350,10 @@ export function createForm<S extends StandardSchemaV1>(options: CreateFormOption
     },
 
     mount() {
+      dirty = false;
+
       if (defaultValues) {
-        applyDefaultValues(el, defaultValues);
-        // Reset stale validation state — defaults represent a fresh baseline
+        applyDefaultValues(el, defaultValues as Record<string, string | string[]>);
         currentErrors = {};
       }
 
