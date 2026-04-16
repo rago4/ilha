@@ -78,11 +78,19 @@ export type ValidateOn = "submit" | "change" | "input";
 
 /**
  * Partial map of field names to their default values.
- * Keys are the DOM `name` attributes — arbitrary strings, including dotted
- * paths like `"user.email"`. Values are strings or string arrays (for
- * checkbox groups / multi-select).
+ *
+ * Known schema keys get autocomplete and are type-checked. Arbitrary string
+ * keys (e.g. dotted paths like `"user.email"`) are also accepted for cases
+ * where the DOM name does not map 1:1 to a top-level schema key.
+ *
+ * Values are `string` for text/select/radio/textarea inputs, or `string[]`
+ * for checkbox groups and `<select multiple>`. File inputs are always skipped.
  */
-export type DefaultValues = Partial<Record<string, string | string[]>>;
+export type DefaultValues<S extends StandardSchemaV1> = {
+  [K in keyof StandardSchemaV1.InferInput<S> & string]?: string | string[];
+} & {
+  [key: string]: string | string[] | undefined;
+};
 
 export interface CreateFormOptions<S extends StandardSchemaV1> {
   /** The form element to bind to. */
@@ -116,7 +124,7 @@ export interface CreateFormOptions<S extends StandardSchemaV1> {
    * @example
    * defaultValues: { email: "ada@example.com", role: "admin" }
    */
-  defaultValues?: DefaultValues;
+  defaultValues?: DefaultValues<S>;
 }
 
 export interface Form<S extends StandardSchemaV1> {
@@ -145,7 +153,7 @@ export interface Form<S extends StandardSchemaV1> {
   /**
    * Attach event listeners to the form and activate the binding.
    * If `defaultValues` are provided they are applied to the DOM here, and
-   * any stale validation state is cleared.
+   * any stale validation and dirty state is cleared.
    * Returns a cleanup/unmount function.
    */
   mount(): () => void;
@@ -350,11 +358,11 @@ export function createForm<S extends StandardSchemaV1>(options: CreateFormOption
     },
 
     mount() {
-      dirty = false;
+      dirty = false; // reset: isDirty() reflects "since this mount() call"
 
       if (defaultValues) {
         applyDefaultValues(el, defaultValues as Record<string, string | string[]>);
-        currentErrors = {};
+        currentErrors = {}; // reset stale validation state after defaults are applied
       }
 
       const listeners: Array<() => void> = [];
